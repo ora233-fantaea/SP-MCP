@@ -347,9 +347,8 @@ def duplicate_layer(layer_id: str) -> dict:
     new_node = ls.insert_fill(pos)
     new_node.set_name(node.get_name())
 
-    import substance_painter.layerstack as _ls
-    for ch in (_ls.ChannelType.BaseColor, _ls.ChannelType.Roughness,
-               _ls.ChannelType.Metallic, _ls.ChannelType.Height, _ls.ChannelType.Normal):
+    for ch in (ls.ChannelType.BaseColor, ls.ChannelType.Roughness,
+               ls.ChannelType.Metallic, ls.ChannelType.Height, ls.ChannelType.Normal):
         new_node.set_opacity(node.get_opacity(ch), ch)
         new_node.set_blending_mode(node.get_blending_mode(ch), ch)
         src = node.get_source(ch)
@@ -416,7 +415,11 @@ def set_texture_set_resolution(width: int, height: int) -> dict:
     if width <= 0 or height <= 0:
         raise ValueError(f"width and height must be positive, got {width}x{height}")
     import substance_painter.textureset as ts
-    # mock: 调用即成功
+    stack = ts.get_active_stack()
+    for textureset in ts.all_texture_sets():
+        if textureset.get_stack() is stack:
+            textureset.set_resolution(width, height)
+            return {"ok": True}
     return {"ok": True}
 
 

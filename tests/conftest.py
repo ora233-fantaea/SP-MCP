@@ -203,7 +203,7 @@ def _make_sp_mock():
             node._parent._children.remove(node)
 
     def move_node(node, pos):
-        """将 node 移动到 pos 位置（简化 mock：从原位删除，插入到根列表头部）。"""
+        """将 node 移动到 pos 位置。简化 mock：删除原位，插入到根列表头部。"""
         delete_node(node)
         _root_nodes.insert(0, node)
 
@@ -282,6 +282,8 @@ def _make_sp_mock():
             return self._name
         def get_resolution(self):
             return self._resolution
+        def set_resolution(self, width, height):
+            self._resolution = MockResolution(width, height)
         def get_stack(self):
             return self._stack
         @property
