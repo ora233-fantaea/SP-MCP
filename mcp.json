@@ -1,0 +1,33 @@
+{
+  "$schema": "https://opencode.ai/mcp.json",
+  "name": "substance-painter",
+  "version": "0.1.0",
+  "description": "Control Substance 3D Painter layer stack and material creation via MCP",
+  "transports": [
+    {
+      "type": "stdio",
+      "command": ["python", "server/sp_mcp.py"]
+    },
+    {
+      "type": "sse",
+      "url": "http://localhost:8765/sse",
+      "start": ["python", "server/sp_mcp.py", "--transport", "sse", "--port", "8765"]
+    }
+  ],
+  "tools": [
+    { "name": "sp_ping",                "description": "Check bridge connectivity" },
+    { "name": "sp_get_layer_stack",     "description": "Return full layer tree as JSON" },
+    { "name": "sp_get_layer_properties","description": "Return properties of a specific layer" },
+    { "name": "sp_add_fill_layer",      "description": "Add a new Fill Layer to the stack" },
+    { "name": "sp_set_layer_property",  "description": "Modify a layer property" },
+    { "name": "sp_apply_smart_material","description": "Apply a Smart Material from Shelf" },
+    { "name": "sp_add_smart_mask",      "description": "Add a procedural mask to a layer" },
+    { "name": "sp_list_shelf_materials","description": "List available Smart Materials" },
+    { "name": "sp_set_iray_params",    "description": "Set Iray render quality parameters" },
+    { "name": "sp_start_iray_render",  "description": "Start Iray render asynchronously" },
+    { "name": "sp_check_iray_render",  "description": "Check Iray render progress" },
+    { "name": "sp_capture_viewport",    "description": "Capture current viewport as base64 PNG" },
+    { "name": "sp_export_textures",     "description": "Export textures with a given preset" },
+    { "name": "sp_run_python",          "description": "Run arbitrary Python in Painter main thread (escape hatch)" }
+  ]
+}
