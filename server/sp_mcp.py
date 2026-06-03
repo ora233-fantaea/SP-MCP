@@ -12,8 +12,14 @@ FastMCP server：对外暴露 MCP tools，内部通过 client.py 和 SP bridge �
 """
 
 import argparse
+import sys
+import os
+
+# 确保 server 包可以被导入（兼容直接运行和 -m 两种方式）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from fastmcp import FastMCP
-from . import client as sp
+from server import client as sp
 
 mcp = FastMCP("substance-painter")
 

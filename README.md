@@ -53,13 +53,15 @@ python server/sp_mcp.py
 ```
 
 ### 3. 配置客户端 (以 OpenCode 为例)
-在客户端的配置文件（如 `%APPDATA%\opencode\config.json`）中添加 MCP Server 节点：
+在客户端的全局配置文件（`~/.config/opencode/opencode.jsonc`）中添加 MCP Server 节点：
 ```json
 {
   "mcp": {
     "substance-painter": {
       "type": "local",
-      "command": ["C:\\<项目绝对路径>\\.venv\\Scripts\\python.exe", "server/sp_mcp.py"]
+      "command": ["C:\\Users\\<你的用户名>\\AppData\\Local\\Programs\\Python\\Python310\\python.exe", "E:\\SP-MCP\\server\\sp_mcp.py"],
+      "enabled": true,
+      "timeout": 30000
     }
   }
 }

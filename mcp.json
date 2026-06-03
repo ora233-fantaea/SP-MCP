@@ -6,12 +6,12 @@
   "transports": [
     {
       "type": "stdio",
-      "command": ["python", "server/sp_mcp.py"]
+      "command": ["C:\\Users\\1\\AppData\\Local\\Programs\\Python\\Python310\\python.exe", "server/sp_mcp.py"]
     },
     {
       "type": "sse",
       "url": "http://localhost:8765/sse",
-      "start": ["python", "server/sp_mcp.py", "--transport", "sse", "--port", "8765"]
+      "start": ["C:\\Users\\1\\AppData\\Local\\Programs\\Python\\Python310\\python.exe", "server/sp_mcp.py", "--transport", "sse", "--port", "8765"]
     }
   ],
   "tools": [
