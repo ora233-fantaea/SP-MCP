@@ -41,13 +41,25 @@ def sp_ping() -> dict:
 @mcp.tool()
 def sp_get_layer_stack() -> list:
     """
-    返回完整图层树 JSON。
-    每个节点包含 id、name、type（FILL/PAINT/GROUP）、enabled、opacity。
+    返回当前活动纹理集的完整图层树 JSON。
+    每个节点包含 id、name、type、enabled、opacity。
     GROUP 类型包含 children 列表（递归）。
-    修改图层前必须调用，获取准确的 layer id。
     注意：layer id 在 Painter 重启后会变化，不要跨 session 缓存。
     """
     return sp.call("get_layer_stack")
+
+
+@mcp.tool()
+def sp_get_texture_sets(filter: str = "") -> list:
+    """
+    返回所有纹理集及其图层结构。
+    每个纹理集包含：id、name、resolution、layers（图层树）。
+    支持按名称关键词过滤（大小写不敏感）。
+
+    filter: 关键词过滤，空字符串返回全部纹理集。
+    返回: [{"id": "249", "name": "att_ammo_50b", "resolution": "4096x4096", "layers": [...]}]
+    """
+    return sp.call("get_texture_sets", {"filter": filter})
 
 
 @mcp.tool()

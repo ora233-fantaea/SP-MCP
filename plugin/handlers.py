@@ -68,6 +68,30 @@ def get_layer_stack() -> list:
     return _serialize_nodes(nodes)
 
 
+def get_texture_sets(filter: str = "") -> list:
+    """返回所有纹理集及其图层结构。"""
+    import substance_painter.textureset as ts
+    import substance_painter.layerstack as ls
+
+    all_ts = ts.all_texture_sets()
+    result = []
+    for textureset in all_ts:
+        name = textureset.name()
+        if filter and filter.lower() not in name.lower():
+            continue
+        res = textureset.get_resolution()
+        stack = textureset.get_stack()
+        root_nodes = ls.get_root_layer_nodes(stack)
+        layers = _serialize_nodes(root_nodes)
+        result.append({
+            "id": str(textureset.material_id),
+            "name": name,
+            "resolution": f"{res.width}x{res.height}",
+            "layers": layers,
+        })
+    return result
+
+
 def get_layer_properties(layer_id: str) -> dict:
     node = _find_layer(layer_id)
     import substance_painter.layerstack as ls
@@ -440,6 +464,7 @@ def _capture_iray() -> dict:
 _REGISTRY: dict = {
     "ping":                  ping,
     "get_layer_stack":       get_layer_stack,
+    "get_texture_sets":      get_texture_sets,
     "get_layer_properties":  get_layer_properties,
     "add_fill_layer":        add_fill_layer,
     "set_layer_property":    set_layer_property,

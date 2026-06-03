@@ -16,7 +16,8 @@
   ],
   "tools": [
     { "name": "sp_ping",                "description": "Check bridge connectivity" },
-    { "name": "sp_get_layer_stack",     "description": "Return full layer tree as JSON" },
+    { "name": "sp_get_layer_stack",     "description": "Return active texture set layer tree as JSON" },
+    { "name": "sp_get_texture_sets",    "description": "Return all texture sets with their layers" },
     { "name": "sp_get_layer_properties","description": "Return properties of a specific layer" },
     { "name": "sp_add_fill_layer",      "description": "Add a new Fill Layer to the stack" },
     { "name": "sp_set_layer_property",  "description": "Modify a layer property" },

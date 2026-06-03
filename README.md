@@ -92,11 +92,12 @@ pip install fastmcp requests
 4. 在对话中直接使用，例如："帮我看看当前 Painter 的图层结构"
 ```
 
-## 🛠️ MCP Tools (全部 14 个工具)
+## 🛠️ MCP Tools (全部 15 个工具)
 
 *   **连接与读取**:
     *   `sp_ping`: 检查 Bridge 连通性及版本状态。任何操作前必须先调用。
-    *   `sp_get_layer_stack`: 返回完整的图层树 JSON（含 Group 子节点递归）。
+    *   `sp_get_layer_stack`: 返回当前活动纹理集的图层树 JSON（含 Group 子节点递归）。
+    *   `sp_get_texture_sets`: 返回所有纹理集及其图层结构，支持名称过滤。
     *   `sp_get_layer_properties`: 获取指定图层的详细属性（opacity、blend_mode 等）。
     *   `sp_list_shelf_materials`: 列出可用 Smart Material，支持关键词过滤。
     *   `sp_capture_viewport`: 截取当前 3D 视口为 Base64 PNG（`mode="quick"` 快速截屏 / `mode="render"` Iray 渲染后截图）。
