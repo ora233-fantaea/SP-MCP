@@ -37,34 +37,59 @@
 ```
 *(提示：插件的详细运行日志会保存在 `%USERPROFILE%\sp_bridge.log`)*
 
-### 2. 部署 MCP Server
-克隆本项目后，在项目根目录创建并激活虚拟环境，然后安装依赖并启动 MCP 服务：
+### 2. 安装 Python 依赖
+克隆本仓库后，在项目根目录安装依赖：
 
 ```powershell
-# 创建虚拟环境并激活
+# 方式 A：使用 venv（推荐）
 python -m venv .venv
 .venv\Scripts\activate
-
-# 安装依赖
 pip install fastmcp requests
 
-# 启动 Server
-python server/sp_mcp.py
+# 方式 B：直接安装到全局 Python
+pip install fastmcp requests
 ```
 
-### 3. 配置客户端 (以 OpenCode 为例)
-在客户端的全局配置文件（`~/.config/opencode/opencode.jsonc`）中添加 MCP Server 节点：
+### 3. 配置 LLM 客户端
+
+#### OpenCode
+在 `~/.config/opencode/opencode.jsonc` 中添加：
+
 ```json
 {
   "mcp": {
     "substance-painter": {
       "type": "local",
-      "command": ["C:\\Users\\<你的用户名>\\AppData\\Local\\Programs\\Python\\Python310\\python.exe", "E:\\SP-MCP\\server\\sp_mcp.py"],
+      "command": ["<你的Python路径>", "<本仓库绝对路径>/server/sp_mcp.py"],
       "enabled": true,
       "timeout": 30000
     }
   }
 }
+```
+
+**注意**：`command` 中的路径必须是绝对路径。Python 路径可通过 `where python` 或 `which python3` 获取。
+
+#### Claude Code / Cursor / Hermes Agent 等
+使用标准 MCP stdio 协议，配置格式类似：
+```json
+{
+  "mcpServers": {
+    "substance-painter": {
+      "command": "<Python路径>",
+      "args": ["<本仓库绝对路径>/server/sp_mcp.py"]
+    }
+  }
+}
+```
+
+### 4. 启动使用
+
+```
+1. 启动 Painter，打开一个项目
+2. 确认 Console 显示 [INFO] sp_bridge: SP Bridge started on port 27182
+3. 启动 LLM 客户端（OpenCode / Claude Code / Cursor 等）
+4. 在对话中直接使用，例如："帮我看看当前 Painter 的图层结构"
 ```
 
 ## 🛠️ MCP Tools (全部 14 个工具)
