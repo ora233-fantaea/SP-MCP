@@ -22,7 +22,7 @@ def mock_bridge(monkeypatch):
     """mock server/client.py 的 call() 函数，避免真实 HTTP 请求。"""
     from server import client as sp_client
 
-    def fake_call(method, params=None):
+    def fake_call(method, params=None, **kwargs):
         params = params or {}
         # 默认返回合理的成功响应
         responses = {
@@ -34,6 +34,10 @@ def mock_bridge(monkeypatch):
             "add_fill_layer":       {"id": "99", "name": params.get("name", "")},
             "set_layer_property":   {"ok": True},
             "export_textures":      {"files": ["BaseColor.png", "Roughness.png"]},
+            "set_iray_params":      {"ok": True, "max_samples": params.get("max_samples", 100),
+                                     "max_time": params.get("max_time", 60)},
+            "start_iray_render":    {"ok": True, "message": "Iray render queued"},
+            "check_iray_render":    {"active": True, "iterations": "50/100", "time": "00:00:10/00:01:00"},
         }
         if method not in responses:
             raise ValueError(f"Unknown method in mock: {method}")
@@ -114,6 +118,28 @@ class TestToolParameters:
             output_dir="/tmp/export"
         )
         assert "files" in result
+
+    def test_sp_set_iray_params_valid(self, mock_bridge):
+        from server.sp_mcp import sp_set_iray_params
+        result = sp_set_iray_params(max_samples=50, max_time=30)
+        assert result["ok"] is True
+        assert result["max_samples"] == 50
+
+    def test_sp_start_iray_render(self, mock_bridge):
+        from server.sp_mcp import sp_start_iray_render
+        result = sp_start_iray_render()
+        assert result["ok"] is True
+
+    def test_sp_check_iray_render(self, mock_bridge):
+        from server.sp_mcp import sp_check_iray_render
+        result = sp_check_iray_render()
+        assert "active" in result
+        assert "iterations" in result
+
+    def test_client_call_with_timeout(self, mock_bridge):
+        from server.client import call
+        result = call("ping", timeout=30)
+        assert result["status"] == "ok"
 
 
 # ---------------------------------------------------------------------------

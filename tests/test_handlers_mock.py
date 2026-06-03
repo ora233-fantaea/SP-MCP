@@ -166,3 +166,81 @@ class TestRunPython:
     def test_syntax_error_raises(self):
         with pytest.raises(SyntaxError):
             handlers.run_python(code="def bad(:")
+
+
+# ── Iray 渲染参数 ────────────────────────────────────────────────────────────
+
+class TestSetIrayParams:
+    def test_sets_max_samples(self):
+        result = handlers.set_iray_params(max_samples=50, max_time=30)
+        assert result["ok"] is True
+        assert result["max_samples"] == 50
+        assert result["max_time"] == 30
+
+    def test_sets_width_height(self):
+        result = handlers.set_iray_params(max_samples=100, max_time=60,
+                                          width=1280, height=720)
+        assert result["ok"] is True
+
+    def test_verify_widget_values(self):
+        import substance_painter.ui
+        from PySide2.QtWidgets import QWidget, QLineEdit, QSpinBox
+
+        win = substance_painter.ui.get_main_window()
+        dock = win.findChild(QWidget, "irayParametersView")
+        panel = dock.widget()
+
+        # 设置前
+        ms_container = panel.findChild(QWidget, "maxSamples")
+        ms_le = ms_container.findChild(QLineEdit, "value")
+        old_val = ms_le.text()
+
+        # 设置
+        handlers.set_iray_params(max_samples=200, max_time=45)
+
+        # 验证
+        assert ms_le.text() == "200"
+
+        # 恢复
+        ms_le.setText(old_val)
+
+
+class TestStartIrayRender:
+    def test_returns_ok(self):
+        result = handlers.start_iray_render()
+        assert result["ok"] is True
+        assert "queued" in result["message"].lower() or "started" in result["message"].lower()
+
+
+class TestCheckIrayRender:
+    def test_returns_status(self):
+        result = handlers.check_iray_render()
+        assert "active" in result
+
+    def test_returns_iterations_when_panel_exists(self):
+        import substance_painter.ui
+        from PySide2.QtWidgets import QWidget
+
+        win = substance_painter.ui.get_main_window()
+        dock = win.findChild(QWidget, "irayParametersView")
+        panel = dock.widget()
+        il = panel.findChild(QWidget, "iterationsLabel")
+        il._text = "150/100"  # mock 设置 label 文本
+
+        result = handlers.check_iray_render()
+        assert result["iterations"] == "150/100"
+
+        il._text = ""  # 恢复
+
+
+class TestCaptureViewportRender:
+    def test_returns_mode_render(self):
+        result = handlers.capture_viewport(mode="render")
+        assert result["mode"] == "render"
+        assert "image" in result
+        assert "width" in result
+        assert "height" in result
+
+    def test_invalid_mode(self):
+        with pytest.raises(ValueError, match="Unknown capture mode"):
+            handlers.capture_viewport(mode="invalid")

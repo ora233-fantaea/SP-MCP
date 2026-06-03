@@ -35,8 +35,8 @@
 | Phase 1 | Bridge 连通 | ✅ 完成 |
 | Phase 2 | 核心图层工具 | ✅ 完成 |
 | Phase 3 | 视觉反馈（截图） | ✅ 完成 |
-| Phase 4 | Smart Material 创作工具 | ✅ 完成（Iray 留后续） |
-| Phase 5 | Skills + Commands 补全 | ⬜ 待开始 |
+| Phase 4 | Smart Material 创作工具 | ✅ 完成（含 Iray） |
+| Phase 5 | Skills + Commands 补全 | ✅ 完成 |
 
 ---
 
@@ -69,21 +69,44 @@
 - `list_shelf_materials(filter)` — 返回 `List[str]`，37 个 metal 材质
 - `apply_smart_material(layer_id, material_name)` — 创建 GroupLayerNode
 - `add_smart_mask(layer_id, mask_name)` — 先 add_mask 再 insert_smart_mask
-- `capture_viewport(mode="render")` — 同 quick 的 Qt grab，返回 `"mode": "render"` 标记
+- `set_iray_params(max_samples, max_time, width, height)` — 通过 UI widget 控制 Iray 参数
+- `start_iray_render()` — QTimer.singleShot 异步触发 Iray
+- `check_iray_render()` — 读取 iterationsLabel/timeLabel 监控渲染进度
+- `capture_viewport(mode="render")` — Iray 渲染完成后 Qt grab 截图
 
-**Iray 限制（已知）：**
-- SP 10.x 无 Python API 触发 Iray 渲染
-- `action.trigger()` 会阻塞 UI 线程导致 timeout
-- 用户需手动触发 Iray（F10 或 Mode > Rendering），等待完成后调用 `capture_viewport(mode="render")` 截取结果
+**Iray 工作流（方案 B — MCP 层独立 tool）：**
+```
+1. sp_set_iray_params(max_samples=100, max_time=60, width=1920, height=1080)
+2. sp_start_iray_render()          ← QTimer 异步触发，不阻塞 HTTP
+3. sp_check_iray_render()          ← 轮询 iterations/time 直到稳定
+4. sp_capture_viewport("render")   ← 渲染完成后截图
+```
+
+**已知限制：**
+- Iray 渲染阻塞 Qt 主线程，渲染期间所有 bridge 请求 timeout
+- `start_iray_render` 的 QTimer.singleShot 延迟触发，HTTP 先返回
+- `check_iray_render` 在渲染期间也会 timeout（主线程被占用）
+- bridge 10s timeout 不变，不影响其他 tool
 
 ---
 
 ## Phase 5 — Skills + Commands 补全
 
+**状态：** ✅ 完成
+
+**已完成：**
+- `.opencode/skills/sp-layer-ops/SKILL.md` — 图层操作 API 速查表
+- `.opencode/skills/sp-creative-workflow/SKILL.md` — 创作迭代循环
+- `.opencode/skills/sp-export-pipeline/SKILL.md` — 导出 + SP2VTF 流水线
+- `.opencode/skills/sp-debug/SKILL.md` — 调试排错指南
+- `.opencode/commands/check.md` — 健康检查一键命令
+- `.opencode/commands/paint.md` — 创作工作流命令
+- `.opencode/commands/export.md` — 导出命令
+
+---
+
 **目标：** 把 Phase 2–4 探索出的真实 API 写进 Skills，
 后续 session 不用重新探索。
-
-**前提：** Phase 2–4 全部完成。
 
 **任务 5.1 — 创建目录结构：**
 ```

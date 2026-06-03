@@ -287,15 +287,187 @@ def _make_sp_mock():
     # ── PySide2 mock ──
     pyside2 = types.ModuleType("PySide2")
     pyside2_core = types.ModuleType("PySide2.QtCore")
+
+    class _FakeSignal:
+        def __init__(self): self._slots = []
+        def connect(self, slot): self._slots.append(slot)
+        def emit(self, *args):
+            for s in self._slots: s(*args)
+
     class _FakeQTimer:
+        _active = []
         def __init__(self): pass
-        def timeout(self): return type('S', (), {'connect': lambda s, f: None})()
+        def timeout(self): return _FakeSignal()
         def start(self, ms): pass
         def stop(self): pass
+        @staticmethod
+        def singleShot(ms, fn): fn()  # mock: 立即执行
+
     pyside2_core.QTimer = _FakeQTimer
     pyside2.QtCore = pyside2_core
+
+    # QBuffer / QIODevice mock for viewport capture
+    class _FakeBuffer:
+        def __init__(self): self._data = b""
+        def open(self, mode): pass
+        def write(self, data): self._data = data
+        def data(self): return self._data
+    pyside2_core.QBuffer = _FakeBuffer
+    pyside2_core.QIODevice = type('QIODevice', (), {'WriteOnly': 0})
+
+    pyside2_widgets = types.ModuleType("PySide2.QtWidgets")
+
+    class _MockWidget:
+        """模拟 Qt widget，支持 findChildren/findChild。"""
+        def __init__(self, name="", parent=None):
+            self._name = name
+            self._parent = parent
+            self._children = []
+            self._text = ""
+            if parent and hasattr(parent, '_children'):
+                parent._children.append(self)
+        def objectName(self): return self._name
+        def text(self): return self._text
+        def setParent(self, p):
+            if self._parent and self in self._parent._children:
+                self._parent._children.remove(self)
+            self._parent = p
+            if p and hasattr(p, '_children') and self not in p._children:
+                p._children.append(self)
+        def findChild(self, dtype, name=""):
+            for c in self._children:
+                if name and c._name != name: continue
+                if dtype and not isinstance(c, dtype): continue
+                return c
+            return None
+        def findChildren(self, dtype):
+            result = []
+            for c in self._children:
+                if isinstance(c, dtype):
+                    result.append(c)
+                if hasattr(c, 'findChildren'):
+                    result.extend(c.findChildren(dtype))
+            return result
+
+    class _MockQLineEdit(_MockWidget):
+        def __init__(self, name="", parent=None):
+            super().__init__(name, parent)
+            self._text = ""
+            self.editingFinished = _FakeSignal()
+        def text(self): return self._text
+        def setText(self, v): self._text = str(v)
+
+    class _MockQSpinBox(_MockWidget):
+        def __init__(self, name="", parent=None):
+            super().__init__(name, parent)
+            self._value = 0
+        def value(self): return self._value
+        def setValue(self, v): self._value = v
+
+    class _MockQComboBox(_MockWidget):
+        def __init__(self, name="", parent=None):
+            super().__init__(name, parent)
+            self._items = []
+            self._current = 0
+        def count(self): return len(self._items)
+        def itemText(self, i): return self._items[i] if i < len(self._items) else ""
+        def currentText(self): return self._items[self._current] if self._items else ""
+
+    class _MockQAction(_MockWidget):
+        def __init__(self, name="", parent=None, enabled=True):
+            super().__init__(name, parent)
+            self._text = name
+            self._enabled = enabled
+        def text(self): return self._text
+        def isEnabled(self): return self._enabled
+        def trigger(self): pass
+
+    class _MockQDockWidget(_MockWidget):
+        def __init__(self, name="", parent=None):
+            super().__init__(name, parent)
+            self._widget = None
+        def widget(self): return self._widget
+        def setWidget(self, w): self._widget = w
+
+    class _MockQMainWindow(_MockWidget):
+        def __init__(self):
+            super().__init__("S4MainWindow")
+        def menuBar(self): return _MockWidget("menubar", self)
+
+    pyside2_widgets.QWidget = _MockWidget
+    pyside2_widgets.QLineEdit = _MockQLineEdit
+    pyside2_widgets.QSpinBox = _MockQSpinBox
+    pyside2_widgets.QComboBox = _MockQComboBox
+    pyside2_widgets.QAction = _MockQAction
+    pyside2_widgets.QDockWidget = _MockQDockWidget
+    pyside2_widgets.QMainWindow = _MockQMainWindow
+    pyside2.QtWidgets = pyside2_widgets
+
+    # QOpenGLWidget mock — used by handlers via PySide2.QtWidgets
+    class _MockQOpenGLWidget(_MockWidget):
+        def __init__(self, name="", parent=None):
+            super().__init__(name, parent)
+            self._w = 800
+            self._h = 600
+        def width(self): return self._w
+        def height(self): return self._h
+        def grab(self):
+            class FakePixmap:
+                def __init__(self, w, h): self._w, self._h = w, h
+                def width(self): return self._w
+                def height(self): return self._h
+                def save(self, buf, fmt): pass
+            return FakePixmap(self._w, self._h)
+
+    pyside2_widgets.QOpenGLWidget = _MockQOpenGLWidget
+
+    # QOpenGLWidget mock for PySide2.QtOpenGLWidgets import path
+    pyside2_gl = types.ModuleType("PySide2.QtOpenGLWidgets")
+    pyside2_gl.QOpenGLWidget = _MockQOpenGLWidget
+    sys.modules["PySide2.QtOpenGLWidgets"] = pyside2_gl
+
     sys.modules["PySide2"] = pyside2
     sys.modules["PySide2.QtCore"] = pyside2_core
+    sys.modules["PySide2.QtWidgets"] = pyside2_widgets
+
+    # ── 构建 mock Iray 面板 ──
+    _mock_main_window = _MockQMainWindow()
+    _iray_panel = _MockWidget("irayParametersView")
+    _mock_dock = _MockQDockWidget("irayParametersView")
+    _mock_dock.setWidget(_iray_panel)
+    _mock_dock.setParent(_mock_main_window)
+
+    # maxSamples / maxTime / width / height widgets
+    _max_samples_container = _MockWidget("maxSamples", _iray_panel)
+    _max_samples_le = _MockQLineEdit("value", _max_samples_container)
+    _max_samples_le.setText("1000")
+
+    _max_time_container = _MockWidget("maxTime", _iray_panel)
+    _max_time_le = _MockQLineEdit("value", _max_time_container)
+    _max_time_le.setText("300")
+
+    _width_sb = _MockQSpinBox("width", _iray_panel)
+    _width_sb.setValue(1920)
+    _height_sb = _MockQSpinBox("height", _iray_panel)
+    _height_sb.setValue(1080)
+
+    # iterationsLabel / timeLabel
+    _MockWidget("iterationsLabel", _iray_panel)
+    _MockWidget("timeLabel", _iray_panel)
+
+    # Iray QAction
+    _iray_action = _MockQAction("Rendering (Iray)", enabled=True)
+    _iray_action.setParent(_mock_main_window)
+
+    # Mock QOpenGLWidget (viewport)
+    _mock_viewport = _MockQOpenGLWidget("Viewer3D", _mock_main_window)
+
+    _mock_viewport = _MockQOpenGLWidget("Viewer3D", _mock_main_window)
+
+    def _mock_get_main_window():
+        return _mock_main_window
+
+    ui.get_main_window = _mock_get_main_window
 
     # ── 注册到 sys.modules ──
     sp.application   = app

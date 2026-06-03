@@ -15,12 +15,17 @@ _BASE_URL = f"http://127.0.0.1:{_PORT}"
 _TIMEOUT = 12.0  # 略大于 bridge 侧的 10s 超时
 
 
-def call(method: str, params: dict | None = None) -> object:
+def call(method: str, params: dict | None = None, timeout: float | None = None) -> object:
     """
     向 SP bridge 发送一次 RPC 调用，返回 result 字段。
 
     成功：返回 result（可以是 dict / list / str / None）
     失败：抛出对应异常
+
+    参数：
+      method   RPC 方法名
+      params   方法参数字典
+      timeout  自定义超时秒数（None 用默认 _TIMEOUT）
 
     异常类型：
       ConnectionError  bridge 不可达（Painter 未启动或插件未加载）
@@ -28,12 +33,13 @@ def call(method: str, params: dict | None = None) -> object:
       RuntimeError     bridge 返回 ok=false（SP API 执行失败）
     """
     payload = {"method": method, "params": params or {}}
+    effective_timeout = timeout if timeout is not None else _TIMEOUT
 
     try:
-        resp = requests.post(_BASE_URL, json=payload, timeout=_TIMEOUT)
+        resp = requests.post(_BASE_URL, json=payload, timeout=effective_timeout)
     except requests.exceptions.Timeout:
         raise ConnectionError(
-            f"SP bridge timeout after {_TIMEOUT}s — "
+            f"SP bridge timeout after {effective_timeout}s — "
             "is Painter running and the project open?"
         )
     except requests.exceptions.ConnectionError:
