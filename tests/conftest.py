@@ -2,7 +2,14 @@
 conftest.py — shared fixtures for SP MCP tests.
 
 mock substance_painter.* 按照 SP 10.x 真实 API 结构构建。
-关键：get_root_layer_nodes(stack) 返回 List[Node] 对象，不是 int ID。
+覆盖 Phase 1–7 所有 handler 需要的 mock。
+
+关键 API 事实：
+- get_root_layer_nodes(stack) 返回 List[Node] 对象，不是 int ID
+- 节点类型：type(node).__name__ → "FillLayerNode" / "GroupLayerNode" / "PaintLayerNode"
+- is_visible() / set_visible(bool) — 不是 is_enabled / set_enabled
+- get_opacity(channel) / set_opacity(val, channel) 需要 ChannelType 参数
+- textureset.name() 是方法，get_resolution() 返回 Resolution(width, height)
 """
 
 import sys
@@ -66,9 +73,11 @@ def _make_sp_mock():
             self._visible = True
             self._opacity = {}
             self._blending = {}
+            self._sources = {}       # channel → value（有状态）
             self._parent = parent
             self._children = []
             self._stack = None
+            self._has_mask = False
 
         def uid(self):
             return self._uid
@@ -104,8 +113,13 @@ def _make_sp_mock():
         def get_stack(self):
             return self._stack
 
-        def set_source(self, ch, color):
-            pass
+        def set_source(self, ch, value):
+            """有状态 mock：存储 channel → value 映射。"""
+            self._sources[ch] = value
+
+        def get_source(self, ch):
+            """返回指定通道的 source 值。"""
+            return self._sources.get(ch)
 
         def add_child(self, child):
             child._parent = self
@@ -123,13 +137,14 @@ def _make_sp_mock():
             "set_name": set_name, "is_visible": is_visible, "set_visible": set_visible,
             "get_opacity": get_opacity, "set_opacity": set_opacity,
             "get_blending_mode": get_blending_mode, "set_blending_mode": set_blending_mode,
-            "get_stack": get_stack, "set_source": set_source, "add_child": add_child,
-            "sub_layers": sub_layers, "add_mask": add_mask,
+            "get_stack": get_stack, "set_source": set_source, "get_source": get_source,
+            "add_child": add_child, "sub_layers": sub_layers, "add_mask": add_mask,
         }
         return type(class_name, (), ns)
 
     MockNode = _make_node_class("FillLayerNode")
     MockGroupNode = _make_node_class("GroupLayerNode")
+    MockPaintNode = _make_node_class("PaintLayerNode")
 
     class MockStack:
         def __init__(self, stack_id=0):
@@ -171,11 +186,26 @@ def _make_sp_mock():
         _root_nodes.insert(0, node)
         return node
 
+    def insert_group(pos):
+        node = MockGroupNode("New Group")
+        _root_nodes.insert(0, node)
+        return node
+
+    def insert_paint(pos):
+        node = MockPaintNode("New Paint")
+        _root_nodes.insert(0, node)
+        return node
+
     def delete_node(node):
         if node in _root_nodes:
             _root_nodes.remove(node)
         elif node._parent and node in node._parent._children:
             node._parent._children.remove(node)
+
+    def move_node(node, pos):
+        """将 node 移动到 pos 位置（简化 mock：从原位删除，插入到根列表头部）。"""
+        delete_node(node)
+        _root_nodes.insert(0, node)
 
     class InsertPosition:
         def __init__(self, node, node_stack=None):
@@ -186,13 +216,16 @@ def _make_sp_mock():
         def from_textureset_stack(stack):
             return InsertPosition(None, stack)
 
-        def above_node(self, node=None):
-            return InsertPosition(node or self._node, self._node_stack)
+        @staticmethod
+        def above_node(node=None):
+            return InsertPosition(node, None)
 
-        def below_node(self, node=None):
-            return InsertPosition(node or self._node, self._node_stack)
+        @staticmethod
+        def below_node(node=None):
+            return InsertPosition(node, None)
 
-        def inside_node(self, node, node_stack):
+        @staticmethod
+        def inside_node(node, node_stack):
             return InsertPosition(node, node_stack)
 
     layerstack.ChannelType = ChannelType
@@ -200,11 +233,15 @@ def _make_sp_mock():
     layerstack.InsertPosition = InsertPosition
     layerstack.MockNode = MockNode
     layerstack.MockGroupNode = MockGroupNode
+    layerstack.MockPaintNode = MockPaintNode
     layerstack.get_root_layer_nodes = get_root_layer_nodes
     layerstack.insert_fill = insert_fill
+    layerstack.insert_group = insert_group
+    layerstack.insert_paint = insert_paint
     layerstack.insert_smart_material = lambda pos, rid: MockGroupNode("Smart_Material")
     layerstack.insert_smart_mask = lambda pos, rid: [MockNode("MaskEffect")]
     layerstack.delete_node = delete_node
+    layerstack.move_node = move_node
 
     class MaskBackground:
         Black = "Black"
@@ -229,8 +266,67 @@ def _make_sp_mock():
 
     # ── substance_painter.textureset ──
     textureset = types.ModuleType("substance_painter.textureset")
+
+    class MockResolution:
+        def __init__(self, width, height):
+            self.width = width
+            self.height = height
+
+    class MockTextureSet:
+        def __init__(self, ts_id, name, width=4096, height=4096):
+            self._id = ts_id
+            self._name = name
+            self._resolution = MockResolution(width, height)
+            self._stack = MockStack(stack_id=ts_id)
+        def name(self):
+            return self._name
+        def get_resolution(self):
+            return self._resolution
+        def get_stack(self):
+            return self._stack
+        @property
+        def material_id(self):
+            return self._id
+
+    _mock_texture_sets = [
+        MockTextureSet(1, "Default"),
+        MockTextureSet(2, "MetalParts"),
+    ]
+
     textureset.get_active_stack = lambda: _mock_stack
+    textureset.set_active_stack = lambda stack: None
+    textureset.all_texture_sets = lambda: list(_mock_texture_sets)
     textureset.Stack = MockStack
+    textureset.Resolution = MockResolution
+    textureset._mock_texture_sets = _mock_texture_sets
+
+    # ── substance_painter.undo ──
+    undo_mod = types.ModuleType("substance_painter.undo")
+    undo_mod.undo = lambda: None
+    undo_mod.redo = lambda: None
+    undo_mod.is_undo_available = lambda: True
+    undo_mod.is_redo_available = lambda: True
+
+    # ── substance_painter.project ──
+    project_mod = types.ModuleType("substance_painter.project")
+    project_mod.name = lambda: "MockProject"
+    project_mod.file_path = lambda: "/mock/project.spp"
+    project_mod.color_space = lambda: "sRGB"
+    project_mod.save = lambda: None
+
+    # ── substance_painter.camera ──
+    camera_mod = types.ModuleType("substance_painter.camera")
+    camera_mod.set_position = lambda x, y, z: None
+    camera_mod.set_target = lambda x, y, z: None
+    camera_mod.set_fov = lambda fov: None
+    camera_mod.frame_all = lambda: None
+    camera_mod.get_position = lambda: (0.0, 0.0, 5.0)
+    camera_mod.get_target = lambda: (0.0, 0.0, 0.0)
+
+    # ── substance_painter.environment ──
+    env_mod = types.ModuleType("substance_painter.environment")
+    env_mod.set_preset = lambda name: None
+    env_mod.get_preset = lambda: "Studio"
 
     # ── substance_painter.export ──
     export = types.ModuleType("substance_painter.export")
@@ -272,14 +368,18 @@ def _make_sp_mock():
             return self._type
 
     def resource_search(query):
-        all_mats = [
+        all_resources = [
             MockResource("Steel", "smartmaterial"),
             MockResource("Copper", "smartmaterial"),
             MockResource("Gold Armor", "smartmaterial"),
+            MockResource("Edge Wear", "smartmask"),
+            MockResource("Dirt", "smartmask"),
+            MockResource("Grunge Scratches", "smartmask"),
+            MockResource("Rust", "smartmask"),
         ]
         if not query:
-            return all_mats
-        return [r for r in all_mats if query.lower() in r._name.lower()]
+            return all_resources
+        return [r for r in all_resources if query.lower() in r._name.lower()]
 
     resource.search = resource_search
     resource.ResourceID = MockResourceID
@@ -416,7 +516,9 @@ def _make_sp_mock():
                 def __init__(self, w, h): self._w, self._h = w, h
                 def width(self): return self._w
                 def height(self): return self._h
-                def save(self, buf, fmt): pass
+                def save(self, buf, fmt):
+                    # 写入假 PNG 数据，使 base64 编码测试通过
+                    buf.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
             return FakePixmap(self._w, self._h)
 
     pyside2_widgets.QOpenGLWidget = _MockQOpenGLWidget
@@ -462,8 +564,6 @@ def _make_sp_mock():
     # Mock QOpenGLWidget (viewport)
     _mock_viewport = _MockQOpenGLWidget("Viewer3D", _mock_main_window)
 
-    _mock_viewport = _MockQOpenGLWidget("Viewer3D", _mock_main_window)
-
     def _mock_get_main_window():
         return _mock_main_window
 
@@ -474,6 +574,10 @@ def _make_sp_mock():
     sp.ui            = ui
     sp.layerstack    = layerstack
     sp.textureset    = textureset
+    sp.undo          = undo_mod
+    sp.project       = project_mod
+    sp.camera        = camera_mod
+    sp.environment   = env_mod
     sp.export        = export
     sp.resource      = resource
 
@@ -483,6 +587,10 @@ def _make_sp_mock():
     sys.modules["substance_painter.logging"]    = logging_mod
     sys.modules["substance_painter.layerstack"]  = layerstack
     sys.modules["substance_painter.textureset"]  = textureset
+    sys.modules["substance_painter.undo"]        = undo_mod
+    sys.modules["substance_painter.project"]     = project_mod
+    sys.modules["substance_painter.camera"]      = camera_mod
+    sys.modules["substance_painter.environment"] = env_mod
     sys.modules["substance_painter.export"]      = export
     sys.modules["substance_painter.resource"]    = resource
 

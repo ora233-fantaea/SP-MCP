@@ -29,6 +29,7 @@ Phase 2 探索发现以下与文档/预期不符的实际 API，所有代码必�
 | `textureset.name` 是属性 | `ts.name()` 是方法，返回 `str` |
 | `textureset.get_resolution` | `ts.get_resolution()` 返回 `Resolution(width, height)` |
 | `type(node).__name__` | `"FillLayerNode"` / `"GroupLayerNode"` / `"PaintLayerNode"` |
+| `type(node).__name__` | `"FillLayerNode"` / `"GroupLayerNode"` / `"PaintLayerNode"` |
 
 ---
 
@@ -151,6 +152,73 @@ prop 可选值：`opacity` / `visible` / `name` / `blend_mode`
 在主线程执行任意 Python 代码。
 **仅作 escape hatch，优先用具体 tool。**
 
+### Iray 渲染
+
+**`sp_set_iray_params(max_samples, max_time, width, height)`**
+设置 Iray 渲染参数。通过 UI widget 控制。
+
+**`sp_start_iray_render()`**
+异步启动 Iray 渲染（QTimer.singleShot，不阻塞 HTTP）。
+
+**`sp_check_iray_render()`**
+检查 Iray 渲染状态，返回 iterations 和 time。
+
+### Phase 6 — 图层基础 + 通道（待实现）
+
+**`sp_delete_layer(layer_id)`**
+删除指定图层。
+
+**`sp_add_group_layer(name)`**
+新建空分组图层。
+
+**`sp_add_paint_layer(name)`**
+新建绘画图层（PaintLayerNode）。
+
+**`sp_undo()` / `sp_redo()`**
+撤销 / 重做上一步操作。
+
+**`sp_set_layer_channel(layer_id, channel, value)`**
+为指定通道设定数值。channel: `"Roughness"` / `"Metallic"` / `"Height"` / `"BaseColor"`。
+非 BaseColor 通道 value 为 float (0.0–1.0)，BaseColor 为 hex color。
+
+**`sp_get_layer_channels(layer_id)`**
+返回所有通道的 opacity、blend_mode、source 值。
+
+### Phase 7 — 图层高级 + TextureSet + 项目 + 相机（待实现）
+
+**`sp_duplicate_layer(layer_id)`**
+复制图层，新图层在原图层上方。
+
+**`sp_move_layer(layer_id, target_id, position)`**
+移动图层到目标图层上方或下方。position: `"above"` / `"below"`。
+
+**`sp_group_layers(layer_ids)`**
+将多个图层打包进新分组。
+
+**`sp_ungroup_layer(layer_id)`**
+解散分组，子层提升到父级。
+
+**`sp_set_active_texture_set(name)`**
+切换当前操作的纹理集。
+
+**`sp_set_texture_set_resolution(width, height)`**
+修改当前纹理集分辨率。
+
+**`sp_get_project_info()`**
+读取项目名、路径、颜色空间等信息。
+
+**`sp_save_project()`**
+保存当前项目。
+
+**`sp_set_camera(x, y, z, target_x, target_y, target_z, fov)`**
+设置相机位置和视角。
+
+**`sp_frame_mesh()`**
+自动适配视图到模型。
+
+**`sp_set_environment(preset)`**
+切换 HDRI 环境光预设。
+
 ---
 
 ## 创作工作流规范
@@ -198,7 +266,7 @@ requests              2.31+
 4. 启动 MCP server：python server/sp_mcp.py
 ```
 
-### OpenCode 配置（%APPDATA%\opencode\config.json）
+### OpenCode 配置（~/.config/opencode/opencode.jsonc）
 
 ```json
 {

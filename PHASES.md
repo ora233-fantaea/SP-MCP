@@ -38,6 +38,8 @@
 | Phase 3 | 视觉反馈（截图） | ✅ 完成 |
 | Phase 4 | Smart Material 创作工具 | ✅ 完成（含 Iray） |
 | Phase 5 | Skills + Commands 补全 | ✅ 完成 |
+| Phase 6 | 图层基础 + 通道 + Undo | 🔲 待开始 |
+| Phase 7 | 图层高级 + TextureSet + 项目 + 相机 | 🔲 待开始 |
 
 ---
 
@@ -244,6 +246,274 @@ description: 导出贴图并转换为 VTF 格式
 - `/check` 命令能一键输出 bridge 健康报告
 - `/paint` 命令能触发一次完整的截图迭代循环
 - `/export` 命令能触发导出并调用 SP2VTF
+
+---
+
+## Phase 6 — 图层基础 + 通道 + Undo
+
+**状态：** 🔲 待开始
+
+**目标：** 补齐现有 handler 测试缺口 + 新增 7 个 tool，覆盖图层增删、分组、绘画图层、undo/redo、通道值控制。
+
+### 任务 6.0 — 补测试缺口
+
+**问题：** 以下 4 个 handler 已实现并 live 验证，但 mock 测试完全缺失：
+
+| Handler | 缺什么 |
+|---------|--------|
+| `get_texture_sets` | `textureset` mock 不完整：缺 `all_texture_sets()`、textureset 对象的 `.name()` `.get_resolution()` `.get_stack()` |
+| `apply_smart_material` | 无测试：`resource.search` + `InsertPosition.above_node` 未验证 |
+| `add_smart_mask` | 无测试：`add_mask` + `insert_smart_mask` + `MaskBackground` + `NodeStack` 未验证 |
+| `list_shelf_materials` | 无测试：`resource.search` 过滤逻辑未验证 |
+
+**具体改动（`tests/conftest.py`）：**
+
+1. 补全 `textureset` mock：
+   - `all_texture_sets()` → 返回含 2 个 mock textureset 对象的列表
+   - 每个对象有 `.name()` → `str`、`.get_resolution()` → `Resolution(width, height)`、`.get_stack()` → `Stack`
+   - `Resolution` 类：`(width, height)` 数据类
+
+2. 已有 mock 确认够用（无需改动）：
+   - `resource.search` 已有智能过滤逻辑（3 个硬编码材质）
+   - `InsertPosition.above_node` / `inside_node` 已 mock
+   - `node.add_mask` 已 mock
+   - `insert_smart_mask` 已 mock
+
+**具体改动（`tests/test_handlers_mock.py`）：**
+
+新增 4 个测试类/函数：
+- `test_get_texture_sets` — 验证返回格式、filter 过滤
+- `test_apply_smart_material` — 验证 resource.search 调用 + insert 结果
+- `test_add_smart_mask` — 验证 add_mask + insert_smart_mask 调用
+- `test_list_shelf_materials` — 验证返回值类型和 filter
+
+**验收：** `pytest tests/ -m "not integration"` 全绿，覆盖所有 16 个现有 tool
+
+---
+
+### 任务 6.1 — 图层删除 + 分组 + 绘画图层（3 tools）
+
+**`sp_delete_layer(layer_id)`**
+
+- handler：`_find_layer(layer_id)` → `ls.delete_node(node)`
+- mock：`ls.delete_node` 已存在（conftest.py:174），无需新增
+- 测试：删除后验证节点不在图层树中
+
+**`sp_add_group_layer(name)`**
+
+- handler：`ls.InsertPosition.from_textureset_stack(stack)` → `ls.insert_group(pos)` → `node.set_name(name)`
+- mock 需新增：`ls.insert_group(pos)` → 创建 `MockGroupNode("New Group")`，插入 `_root_nodes[0]`，返回节点
+- 测试：创建后验证图层树中有 GroupLayerNode
+
+**`sp_add_paint_layer(name)`**
+
+- handler：同上，用 `ls.insert_paint(pos)`
+- mock 需新增：
+  - `_make_node_class("PaintLayerNode")` → 创建 `MockPaintNode` 类
+  - `ls.insert_paint(pos)` → 创建 `MockPaintNode("New Paint")`，插入 `_root_nodes[0]`，返回节点
+- 测试：创建后验证 type 为 PaintLayerNode
+
+**改动文件：** `conftest.py`（+20 行）、`handlers.py`（+25 行）、`sp_mcp.py`（+25 行）、`test_handlers_mock.py`（+30 行）、`mcp.json`（+3 tools）
+
+---
+
+### 任务 6.2 — Undo / Redo（2 tools）
+
+**`sp_undo()` / `sp_redo()`**
+
+- handler：`import substance_painter.undo; undo.undo()` / `undo.redo()`
+- mock 需新增：`substance_painter.undo` 整个模块
+  - `undo()` → 无操作（mock 无法真正 undo，但接口要通）
+  - `redo()` → 无操作
+  - `is_undo_available()` → `True`（用于验证调用可行性）
+  - `is_redo_available()` → `True`
+- 测试：调用后验证无异常，返回 `{"ok": true}`
+
+**改动文件：** `conftest.py`（+12 行）、`handlers.py`（+12 行）、`sp_mcp.py`（+16 行）、`test_handlers_mock.py`（+10 行）、`mcp.json`（+2 tools）
+
+---
+
+### 任务 6.3 — 通道值控制（2 tools）
+
+**`sp_set_layer_channel(layer_id, channel, value)`**
+
+- handler：
+  ```python
+  ch = _parse_channel(channel)  # "roughness" → ChannelType.Roughness
+  if ch == ChannelType.BaseColor:
+      r, g, b = _hex_to_rgb(value)
+      layer.set_source(ch, ls.Color(r, g, b))
+  else:
+      layer.set_source(ch, float(value))
+  ```
+- mock 改动：`node.set_source` 从 no-op 改为**有状态**：
+  ```python
+  def set_source(self, ch, value):
+      self._sources[ch] = value
+  def get_source(self, ch):
+      return self._sources.get(ch)
+  ```
+- 测试：set roughness=0.5 → get 返回 0.5
+
+**`sp_get_layer_channels(layer_id)`**
+
+- handler：遍历 `ChannelType` 枚举值，对每个调用 `get_opacity(ch)` + `get_blending_mode(ch)` + `get_source(ch)`
+- 返回：`{"BaseColor": {"opacity": 1.0, "blend_mode": "Normal", "source": "#FF0000"}, "Roughness": {"opacity": 1.0, "blend_mode": "Normal", "source": 0.5}, ...}`
+- mock：利用已有的 `get_opacity` / `get_blending_mode` + 新增的 `get_source`
+- 测试：add_fill_layer 设 roughness → get_layer_channels 验证
+
+**改动文件：** `conftest.py`（+10 行改 set_source）、`handlers.py`（+30 行）、`sp_mcp.py`（+25 行）、`test_handlers_mock.py`（+20 行）、`mcp.json`（+2 tools）
+
+---
+
+### Phase 6 验收标准
+
+- `pytest tests/ -m "not integration"` 全绿（预计 56 + ~25 = 81+ tests）
+- 7 个新 tool 均有 mock 测试 + server 测试
+- 4 个补测 handler 均有测试覆盖
+- `PHASES.md` 更新 Phase 6 状态为 ✅
+- `AGENTS.md` 更新 tool 列表为 23 个
+
+---
+
+## Phase 7 — 图层高级 + TextureSet + 项目 + 相机
+
+**状态：** 🔲 待开始
+
+**目标：** 新增 11 个 tool，覆盖图层复制/移动/分组/解散、纹理集管理、项目操作、相机控制。
+
+### 任务 7.1 — 图层高级操作（4 tools）
+
+**`sp_duplicate_layer(layer_id)`**
+
+- handler：
+  1. `_find_layer(layer_id)` 获取源节点
+  2. 读取属性：`get_name()`, `get_opacity(ch)`, `get_blending_mode(ch)`, `get_source(ch)`（各通道）
+  3. `ls.insert_fill(ls.InsertPosition.above_node(src))` 创建新节点
+  4. 复制所有属性到新节点
+- mock：组合现有 API，无新增 mock
+- 测试：duplicate → 验证图层树中有两个同名节点
+
+**`sp_move_layer(layer_id, target_id, position)`**
+
+- handler：
+  1. 找到两个节点
+  2. `ls.move_node(node, ls.InsertPosition.above_node(target))` 或 `below_node(target)`
+- mock 需新增：`ls.move_node(node, pos)` → 从当前父级删除 → 在 pos 位置插入
+- 测试：move 后验证顺序变化
+
+**`sp_group_layers(layer_ids)`**
+
+- handler：
+  1. 找到所有节点（按图层树顺序）
+  2. `ls.insert_group(ls.InsertPosition.above_node(first))` 创建空组
+  3. 依次 `ls.move_node(child, ls.InsertPosition.inside_node(group, group.get_stack()))` 移入组
+- mock：组合 `insert_group` + `move_node`
+- 测试：group 后验证子节点在组内
+
+**`sp_ungroup_layer(layer_id)`**
+
+- handler：
+  1. 找到组节点
+  2. 遍历 `group.sub_layers()` → `ls.move_node(child, ls.InsertPosition.above_node(group))`
+  3. `ls.delete_node(group)`
+- mock：组合 `move_node` + `delete_node`
+- 测试：ungroup 后验证子节点提升到父级，组已删除
+
+**改动文件：** `conftest.py`（+15 行 move_node）、`handlers.py`（+60 行）、`sp_mcp.py`（+50 行）、`test_handlers_mock.py`（+40 行）、`mcp.json`（+4 tools）
+
+---
+
+### 任务 7.2 — TextureSet 管理 + 项目（4 tools）
+
+**`sp_set_active_texture_set(name)`**
+
+- handler：
+  1. `ts.all_texture_sets()` 遍历找 `t.name() == name`
+  2. `ts.set_active_stack(t.get_stack())`
+- mock 需新增：
+  - `textureset.set_active_stack(stack)` → 更新全局 `_mock_stack`
+  - conftest 6.0 中已补全的 `all_texture_sets()` 返回 mock 对象
+- 测试：切换后 `get_active_stack()` 返回新 stack
+
+**`sp_set_texture_set_resolution(width, height)`**
+
+- handler：
+  1. `ts.get_active_stack()` → 找到当前 textureset
+  2. `ts.set_resolution(width, height)`
+- mock 需新增：`textureset.set_resolution(w, h)` → 存储到 textureset 对象
+- 测试：设置后 get_resolution 返回新值
+
+**`sp_get_project_info()`**
+
+- handler：
+  ```python
+  import substance_painter.project as proj
+  return {
+      "name": proj.name(),
+      "file_path": proj.file_path(),
+      "color_space": proj.color_space(),
+  }
+  ```
+- mock 需新增：`substance_painter.project` 模块
+  - `name()` → `"MockProject"`
+  - `file_path()` → `"/mock/project.spp"`
+  - `color_space()` → `"sRGB"`
+  - `save()` → 无操作
+- 测试：调用返回预期结构
+
+**`sp_save_project()`**
+
+- handler：`project.save()` → `{"ok": true}`
+- mock：同上 `project.save()`
+- 测试：调用无异常
+
+**改动文件：** `conftest.py`（+25 行 project 模块 + textureset 完善）、`handlers.py`（+40 行）、`sp_mcp.py`（+40 行）、`test_handlers_mock.py`（+30 行）、`mcp.json`（+4 tools）
+
+---
+
+### 任务 7.3 — 相机 + 环境（3 tools）
+
+**需要先探索的 API：**
+```python
+# 用 sp_run_python 在 Painter 中探索
+import substance_painter.camera; print(dir(substance_painter.camera))
+import substance_painter.environment; print(dir(substance_painter.environment))
+```
+
+**`sp_set_camera(x, y, z, target_x, target_y, target_z, fov)`**
+
+- handler：根据探索结果实现（可能是 `camera.set_position()` / `camera.set_target()` 或 UI 操作）
+- mock 需新增：`substance_painter.camera` 模块
+- 测试：调用无异常
+
+**`sp_frame_mesh()`**
+
+- handler：`camera.frame_all()` 或等效 API
+- mock：同上
+- 测试：调用无异常
+
+**`sp_set_environment(preset)`**
+
+- handler：切换 HDRI 环境光预设
+- mock 需新增：`substance_painter.environment` 模块
+- 测试：调用无异常
+
+**注意：** camera/environment API 未经探索，实际签名可能不同。
+实现时先用 `sp_run_python` 探索真实 API，再调整 mock 和 handler。
+
+**改动文件：** `conftest.py`（+20 行）、`handlers.py`（+30 行）、`sp_mcp.py`（+30 行）、`test_handlers_mock.py`（+15 行）、`mcp.json`（+3 tools）
+
+---
+
+### Phase 7 验收标准
+
+- `pytest tests/ -m "not integration"` 全绿（预计 81 + ~35 = 116+ tests）
+- 11 个新 tool 均有 mock 测试 + server 测试
+- `PHASES.md` 更新 Phase 7 状态为 ✅
+- `AGENTS.md` 更新 tool 列表为 34 个
+- 所有新 tool 写入 `mcp.json`
+- 相关 SKILL.md 更新
 
 ---
 

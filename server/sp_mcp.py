@@ -270,6 +270,225 @@ def sp_run_python(code: str) -> dict:
     return sp.call("run_python", {"code": code})
 
 
+# ── Phase 6 — 图层基础 + 通道 + Undo ────────────────────────────────────────
+
+@mcp.tool()
+def sp_delete_layer(layer_id: str) -> dict:
+    """
+    删除指定图层。
+    layer_id 从 sp_get_layer_stack 获取。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("delete_layer", {"layer_id": layer_id})
+
+
+@mcp.tool()
+def sp_add_group_layer(name: str) -> dict:
+    """
+    新建空分组图层。
+    name: 分组名称，使用语义化命名。
+    """
+    if not name:
+        raise ValueError("name must not be empty")
+    return sp.call("add_group_layer", {"name": name})
+
+
+@mcp.tool()
+def sp_add_paint_layer(name: str) -> dict:
+    """
+    新建绘画图层（PaintLayerNode）。
+    name: 图层名称。
+    """
+    if not name:
+        raise ValueError("name must not be empty")
+    return sp.call("add_paint_layer", {"name": name})
+
+
+@mcp.tool()
+def sp_undo() -> dict:
+    """
+    撤销上一步操作。
+    返回是否仍可继续 undo。
+    """
+    return sp.call("undo")
+
+
+@mcp.tool()
+def sp_redo() -> dict:
+    """
+    重做上一步被撤销的操作。
+    返回是否仍可继续 redo。
+    """
+    return sp.call("redo")
+
+
+@mcp.tool()
+def sp_set_layer_channel(layer_id: str, channel: str, value: object) -> dict:
+    """
+    为指定通道设定数值。
+
+    layer_id  从 sp_get_layer_stack 获取
+    channel   通道名：Roughness / Metallic / Height / BaseColor / Normal
+    value     非 BaseColor 通道为 float (0.0–1.0)，BaseColor 为 hex color ("#FF0000")
+
+    修改后建议调用 sp_capture_viewport 确认视觉效果。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("set_layer_channel", {
+        "layer_id": layer_id,
+        "channel":  channel,
+        "value":    value,
+    })
+
+
+@mcp.tool()
+def sp_get_layer_channels(layer_id: str) -> dict:
+    """
+    返回所有通道的 opacity、blend_mode、source 值。
+    用于查看图层的完整 PBR 通道状态。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("get_layer_channels", {"layer_id": layer_id})
+
+
+# ── Phase 7 — 图层高级 + TextureSet + 项目 + 相机 ───────────────────────────
+
+@mcp.tool()
+def sp_duplicate_layer(layer_id: str) -> dict:
+    """
+    复制图层，新图层在原图层上方。
+    新图层继承原图层的所有通道属性。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("duplicate_layer", {"layer_id": layer_id})
+
+
+@mcp.tool()
+def sp_move_layer(layer_id: str, target_id: str, position: str = "above") -> dict:
+    """
+    移动图层到目标图层上方或下方。
+
+    layer_id  要移动的图层 ID
+    target_id 目标图层 ID
+    position  "above"（默认）或 "below"
+    """
+    if position not in ("above", "below"):
+        raise ValueError(f"position must be 'above' or 'below', got {position!r}")
+    return sp.call("move_layer", {
+        "layer_id":  layer_id,
+        "target_id": target_id,
+        "position":  position,
+    })
+
+
+@mcp.tool()
+def sp_group_layers(layer_ids: list) -> dict:
+    """
+    将多个图层打包进新分组。
+    layer_ids: 图层 ID 列表，至少 1 个。
+    """
+    if not layer_ids:
+        raise ValueError("layer_ids must not be empty")
+    return sp.call("group_layers", {"layer_ids": layer_ids})
+
+
+@mcp.tool()
+def sp_ungroup_layer(layer_id: str) -> dict:
+    """
+    解散分组，子层提升到父级。
+    group 内的图层会被移到 group 原位置的上方。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("ungroup_layer", {"layer_id": layer_id})
+
+
+@mcp.tool()
+def sp_set_active_texture_set(name: str) -> dict:
+    """
+    切换当前操作的纹理集。
+    name: 纹理集名称（从 sp_get_texture_sets 获取）。
+    """
+    if not name:
+        raise ValueError("name must not be empty")
+    return sp.call("set_active_texture_set", {"name": name})
+
+
+@mcp.tool()
+def sp_set_texture_set_resolution(width: int, height: int) -> dict:
+    """
+    修改当前纹理集分辨率。
+    width/height: 分辨率数值（如 2048, 4096）。
+    常用值：1024, 2048, 4096。
+    """
+    if width <= 0 or height <= 0:
+        raise ValueError(f"width and height must be positive, got {width}x{height}")
+    return sp.call("set_texture_set_resolution", {
+        "width":  width,
+        "height": height,
+    })
+
+
+@mcp.tool()
+def sp_get_project_info() -> dict:
+    """
+    读取当前项目信息。
+    返回：name、file_path、color_space。
+    """
+    return sp.call("get_project_info")
+
+
+@mcp.tool()
+def sp_save_project() -> dict:
+    """
+    保存当前项目。
+    建议在导出前调用。
+    """
+    return sp.call("save_project")
+
+
+@mcp.tool()
+def sp_set_camera(
+    x: float, y: float, z: float,
+    target_x: float, target_y: float, target_z: float,
+    fov: float,
+) -> dict:
+    """
+    设置相机位置和视角。
+
+    x/y/z           相机位置
+    target_x/y/z    目标点位置（相机朝向）
+    fov             视场角（度），默认 45
+    """
+    return sp.call("set_camera", {
+        "x": x, "y": y, "z": z,
+        "target_x": target_x, "target_y": target_y, "target_z": target_z,
+        "fov": fov,
+    })
+
+
+@mcp.tool()
+def sp_frame_mesh() -> dict:
+    """
+    自动适配视图到模型（frame all）。
+    相机会自动调整位置和缩放以适配整个模型。
+    """
+    return sp.call("frame_mesh")
+
+
+@mcp.tool()
+def sp_set_environment(preset: str) -> dict:
+    """
+    切换 HDRI 环境光预设。
+    preset: 预设名称（如 "Sunrise", "Studio", "Night"）。
+    """
+    return sp.call("set_environment", {"preset": preset})
+
+
 # ── 入口 ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:

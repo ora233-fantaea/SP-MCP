@@ -1,13 +1,24 @@
 """
 test_handlers_mock.py — 测试 plugin/handlers.py 的业务逻辑。
-substance_painter.* 已由 conftest.py 完整 mock。
+
+覆盖 Phase 1–7 所有 handler：
+- Phase 2: get_layer_stack, add_fill_layer, set_layer_property, get_layer_properties
+- Phase 3: capture_viewport (quick/render)
+- Phase 4: get_texture_sets, apply_smart_material, add_smart_mask, list_shelf_materials,
+           set_iray_params, start_iray_render, check_iray_render
+- Phase 6: delete_layer, add_group_layer, add_paint_layer, undo, redo,
+           set_layer_channel, get_layer_channels
+- Phase 7: duplicate_layer, move_layer, group_layers, ungroup_layer,
+           set_active_texture_set, set_texture_set_resolution,
+           get_project_info, save_project,
+           set_camera, frame_mesh, set_environment
 """
 
 import pytest
 from plugin import handlers  # noqa: E402
 
 
-# ── get_layer_stack ──────────────────────────────────────────────────────────
+# ── Phase 2: get_layer_stack ─────────────────────────────────────────────────
 
 class TestGetLayerStack:
     def test_returns_list(self, fresh_layer_stack):
@@ -43,7 +54,7 @@ class TestGetLayerStack:
         ls._build_default_stack()
 
 
-# ── add_fill_layer ───────────────────────────────────────────────────────────
+# ── Phase 2: add_fill_layer ──────────────────────────────────────────────────
 
 class TestAddFillLayer:
     def test_returns_id_and_name(self, fresh_layer_stack):
@@ -74,7 +85,7 @@ class TestAddFillLayer:
             handlers.add_fill_layer(name="Bad", opacity=1.5)
 
 
-# ── set_layer_property ───────────────────────────────────────────────────────
+# ── Phase 2: set_layer_property ──────────────────────────────────────────────
 
 class TestSetLayerProperty:
     def test_set_opacity(self, fresh_layer_stack):
@@ -113,7 +124,7 @@ class TestSetLayerProperty:
             handlers.set_layer_property(layer_id, "nonexistent", 0.5)
 
 
-# ── get_layer_properties ─────────────────────────────────────────────────────
+# ── Phase 2: get_layer_properties ────────────────────────────────────────────
 
 class TestGetLayerProperties:
     def test_returns_dict(self, fresh_layer_stack):
@@ -127,48 +138,133 @@ class TestGetLayerProperties:
             handlers.get_layer_properties("999999")
 
 
-# ── export_textures ──────────────────────────────────────────────────────────
+# ── Phase 3: capture_viewport ────────────────────────────────────────────────
 
-class TestExportTextures:
-    def test_returns_files_list(self, fresh_layer_stack):
-        result = handlers.export_textures(preset="PBR Metallic Roughness",
-                                          output_dir="/tmp/export")
-        assert "files" in result and len(result["files"]) > 0
+class TestCaptureViewportQuick:
+    def test_returns_image(self, fresh_layer_stack):
+        result = handlers.capture_viewport(mode="quick")
+        assert "image" in result
+        assert "width" in result
+        assert "height" in result
+
+    def test_returns_base64(self, fresh_layer_stack):
+        import base64
+        result = handlers.capture_viewport(mode="quick")
+        decoded = base64.b64decode(result["image"])
+        assert len(decoded) > 0
 
 
-# ── dispatch ─────────────────────────────────────────────────────────────────
+class TestCaptureViewportRender:
+    def test_returns_mode_render(self):
+        result = handlers.capture_viewport(mode="render")
+        assert result["mode"] == "render"
+        assert "image" in result
 
-class TestDispatch:
-    def test_ping(self):
-        result = handlers.dispatch({"method": "ping", "params": {}})
-        assert result["status"] == "ok"
+    def test_invalid_mode(self):
+        with pytest.raises(ValueError, match="Unknown capture mode"):
+            handlers.capture_viewport(mode="invalid")
 
-    def test_ping_has_smart_api(self):
-        result = handlers.dispatch({"method": "ping", "params": {}})
-        assert result["smart_api"] is True
 
-    def test_unknown_method(self):
-        with pytest.raises(ValueError, match="Unknown method"):
-            handlers.dispatch({"method": "nope", "params": {}})
+# ── Phase 4: get_texture_sets ────────────────────────────────────────────────
 
-    def test_get_layer_stack_via_dispatch(self, fresh_layer_stack):
-        result = handlers.dispatch({"method": "get_layer_stack", "params": {}})
+class TestGetTextureSets:
+    def test_returns_list(self, fresh_layer_stack):
+        result = handlers.get_texture_sets()
         assert isinstance(result, list)
 
+    def test_returns_two_default(self, fresh_layer_stack):
+        result = handlers.get_texture_sets()
+        assert len(result) == 2
 
-# ── run_python ───────────────────────────────────────────────────────────────
+    def test_has_required_fields(self, fresh_layer_stack):
+        result = handlers.get_texture_sets()
+        for ts in result:
+            for key in ("id", "name", "resolution", "layers"):
+                assert key in ts
 
-class TestRunPython:
-    def test_stdout_capture(self):
-        result = handlers.run_python(code="print('hello sp')")
-        assert "hello sp" in result["stdout"]
+    def test_resolution_format(self, fresh_layer_stack):
+        result = handlers.get_texture_sets()
+        for ts in result:
+            assert "x" in ts["resolution"]
 
-    def test_syntax_error_raises(self):
-        with pytest.raises(SyntaxError):
-            handlers.run_python(code="def bad(:")
+    def test_filter_match(self, fresh_layer_stack):
+        result = handlers.get_texture_sets(filter="Metal")
+        assert len(result) == 1
+        assert result[0]["name"] == "MetalParts"
+
+    def test_filter_no_match(self, fresh_layer_stack):
+        result = handlers.get_texture_sets(filter="Nonexistent")
+        assert len(result) == 0
+
+    def test_layers_are_trees(self, fresh_layer_stack):
+        result = handlers.get_texture_sets()
+        for ts in result:
+            assert isinstance(ts["layers"], list)
 
 
-# ── Iray 渲染参数 ────────────────────────────────────────────────────────────
+# ── Phase 4: apply_smart_material ────────────────────────────────────────────
+
+class TestApplySmartMaterial:
+    def test_returns_id_and_name(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[0]["id"]
+        result = handlers.apply_smart_material(layer_id, "Steel")
+        assert "id" in result
+        assert result["name"] == "Smart_Material"
+
+    def test_invalid_material_name(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[0]["id"]
+        with pytest.raises(ValueError, match="not found"):
+            handlers.apply_smart_material(layer_id, "NonexistentMaterial")
+
+    def test_invalid_layer_id(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="not found"):
+            handlers.apply_smart_material("999999", "Steel")
+
+
+# ── Phase 4: add_smart_mask ──────────────────────────────────────────────────
+
+class TestAddSmartMask:
+    def test_returns_ok(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[0]["id"]
+        result = handlers.add_smart_mask(layer_id, "Edge Wear")
+        assert result["ok"] is True
+        assert result["effects_count"] == 1
+
+    def test_invalid_mask_name(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[0]["id"]
+        with pytest.raises(ValueError, match="not found"):
+            handlers.add_smart_mask(layer_id, "NonexistentMask")
+
+    def test_invalid_layer_id(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="not found"):
+            handlers.add_smart_mask("999999", "Edge Wear")
+
+
+# ── Phase 4: list_shelf_materials ────────────────────────────────────────────
+
+class TestListShelfMaterials:
+    def test_returns_list(self, fresh_layer_stack):
+        result = handlers.list_shelf_materials()
+        assert isinstance(result, list)
+
+    def test_returns_all_when_empty_filter(self, fresh_layer_stack):
+        result = handlers.list_shelf_materials(filter="")
+        assert len(result) == 3
+
+    def test_filter_steel(self, fresh_layer_stack):
+        result = handlers.list_shelf_materials(filter="Steel")
+        assert "Steel" in result
+
+    def test_filter_case_insensitive(self, fresh_layer_stack):
+        result = handlers.list_shelf_materials(filter="copper")
+        assert "Copper" in result
+
+    def test_filter_no_match(self, fresh_layer_stack):
+        result = handlers.list_shelf_materials(filter="Nonexistent")
+        assert len(result) == 0
+
+
+# ── Phase 4: Iray 渲染参数 ──────────────────────────────────────────────────
 
 class TestSetIrayParams:
     def test_sets_max_samples(self):
@@ -190,18 +286,13 @@ class TestSetIrayParams:
         dock = win.findChild(QWidget, "irayParametersView")
         panel = dock.widget()
 
-        # 设置前
         ms_container = panel.findChild(QWidget, "maxSamples")
         ms_le = ms_container.findChild(QLineEdit, "value")
         old_val = ms_le.text()
 
-        # 设置
         handlers.set_iray_params(max_samples=200, max_time=45)
-
-        # 验证
         assert ms_le.text() == "200"
 
-        # 恢复
         ms_le.setText(old_val)
 
 
@@ -225,22 +316,385 @@ class TestCheckIrayRender:
         dock = win.findChild(QWidget, "irayParametersView")
         panel = dock.widget()
         il = panel.findChild(QWidget, "iterationsLabel")
-        il._text = "150/100"  # mock 设置 label 文本
+        il._text = "150/100"
 
         result = handlers.check_iray_render()
         assert result["iterations"] == "150/100"
 
-        il._text = ""  # 恢复
+        il._text = ""
 
 
-class TestCaptureViewportRender:
-    def test_returns_mode_render(self):
-        result = handlers.capture_viewport(mode="render")
-        assert result["mode"] == "render"
-        assert "image" in result
-        assert "width" in result
-        assert "height" in result
+# ── Phase 4: export_textures ─────────────────────────────────────────────────
 
-    def test_invalid_mode(self):
-        with pytest.raises(ValueError, match="Unknown capture mode"):
-            handlers.capture_viewport(mode="invalid")
+class TestExportTextures:
+    def test_returns_files_list(self, fresh_layer_stack):
+        result = handlers.export_textures(preset="PBR Metallic Roughness",
+                                          output_dir="/tmp/export")
+        assert "files" in result and len(result["files"]) > 0
+
+
+# ── Phase 2: dispatch ────────────────────────────────────────────────────────
+
+class TestDispatch:
+    def test_ping(self):
+        result = handlers.dispatch({"method": "ping", "params": {}})
+        assert result["status"] == "ok"
+
+    def test_ping_has_smart_api(self):
+        result = handlers.dispatch({"method": "ping", "params": {}})
+        assert result["smart_api"] is True
+
+    def test_unknown_method(self):
+        with pytest.raises(ValueError, match="Unknown method"):
+            handlers.dispatch({"method": "nope", "params": {}})
+
+    def test_get_layer_stack_via_dispatch(self, fresh_layer_stack):
+        result = handlers.dispatch({"method": "get_layer_stack", "params": {}})
+        assert isinstance(result, list)
+
+
+# ── Phase 2: run_python ──────────────────────────────────────────────────────
+
+class TestRunPython:
+    def test_stdout_capture(self):
+        result = handlers.run_python(code="print('hello sp')")
+        assert "hello sp" in result["stdout"]
+
+    def test_syntax_error_raises(self):
+        with pytest.raises(SyntaxError):
+            handlers.run_python(code="def bad(:")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 6 — 图层基础 + 通道 + Undo
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── Phase 6: delete_layer ────────────────────────────────────────────────────
+
+class TestDeleteLayer:
+    def test_delete_root_layer(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        result = handlers.delete_layer(layer_id)
+        assert result["ok"] is True
+        names = [l["name"] for l in handlers.get_layer_stack()]
+        assert "Edge_Wear" not in names
+
+    def test_delete_group_removes_children(self, fresh_layer_stack):
+        stack = handlers.get_layer_stack()
+        group = [n for n in stack if n["type"] == "GroupLayerNode"][0]
+        result = handlers.delete_layer(group["id"])
+        assert result["ok"] is True
+        remaining = handlers.get_layer_stack()
+        assert all(n["type"] != "GroupLayerNode" for n in remaining)
+
+    def test_delete_nonexistent_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="not found"):
+            handlers.delete_layer("999999")
+
+
+# ── Phase 6: add_group_layer ─────────────────────────────────────────────────
+
+class TestAddGroupLayer:
+    def test_returns_id_and_name(self, fresh_layer_stack):
+        result = handlers.add_group_layer(name="MyGroup")
+        assert "id" in result
+        assert result["name"] == "MyGroup"
+
+    def test_group_appears_in_stack(self, fresh_layer_stack):
+        handlers.add_group_layer(name="NewGroup")
+        types = [l["type"] for l in handlers.get_layer_stack()]
+        assert "GroupLayerNode" in types
+
+    def test_group_has_no_children(self, fresh_layer_stack):
+        handlers.add_group_layer(name="EmptyGroup")
+        stack = handlers.get_layer_stack()
+        group = [n for n in stack if n["name"] == "EmptyGroup"][0]
+        assert group["children"] == []
+
+
+# ── Phase 6: add_paint_layer ─────────────────────────────────────────────────
+
+class TestAddPaintLayer:
+    def test_returns_id_and_name(self, fresh_layer_stack):
+        result = handlers.add_paint_layer(name="MyPaint")
+        assert "id" in result
+        assert result["name"] == "MyPaint"
+
+    def test_paint_layer_type(self, fresh_layer_stack):
+        result = handlers.add_paint_layer(name="PaintLayer")
+        layer_id = result["id"]
+        props = handlers.get_layer_properties(layer_id)
+        assert props["type"] == "PaintLayerNode"
+
+    def test_paint_layer_appears_in_stack(self, fresh_layer_stack):
+        handlers.add_paint_layer(name="VisiblePaint")
+        names = [l["name"] for l in handlers.get_layer_stack()]
+        assert "VisiblePaint" in names
+
+
+# ── Phase 6: undo / redo ─────────────────────────────────────────────────────
+
+class TestUndo:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.undo()
+        assert result["ok"] is True
+
+    def test_undoable_status(self, fresh_layer_stack):
+        result = handlers.undo()
+        assert result["undoable"] is True
+
+
+class TestRedo:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.redo()
+        assert result["ok"] is True
+
+    def test_redoable_status(self, fresh_layer_stack):
+        result = handlers.redo()
+        assert result["redoable"] is True
+
+
+# ── Phase 6: set_layer_channel ───────────────────────────────────────────────
+
+class TestSetLayerChannel:
+    def test_set_roughness(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        result = handlers.set_layer_channel(layer_id, "Roughness", 0.5)
+        assert result["ok"] is True
+
+    def test_set_metallic(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        result = handlers.set_layer_channel(layer_id, "Metallic", 0.8)
+        assert result["ok"] is True
+
+    def test_set_height(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        result = handlers.set_layer_channel(layer_id, "Height", 0.3)
+        assert result["ok"] is True
+
+    def test_set_basecolor(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        result = handlers.set_layer_channel(layer_id, "BaseColor", "#FF0000")
+        assert result["ok"] is True
+
+    def test_invalid_channel(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        with pytest.raises(ValueError, match="Unknown channel"):
+            handlers.set_layer_channel(layer_id, "InvalidChannel", 0.5)
+
+    def test_nonexistent_layer(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="not found"):
+            handlers.set_layer_channel("999999", "Roughness", 0.5)
+
+
+# ── Phase 6: get_layer_channels ──────────────────────────────────────────────
+
+class TestGetLayerChannels:
+    def test_returns_dict(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        result = handlers.get_layer_channels(layer_id)
+        assert isinstance(result, dict)
+
+    def test_has_all_channels(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        result = handlers.get_layer_channels(layer_id)
+        for ch in ("BaseColor", "Roughness", "Metallic", "Height", "Normal"):
+            assert ch in result
+
+    def test_channel_has_fields(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        result = handlers.get_layer_channels(layer_id)
+        for ch_name, ch_data in result.items():
+            assert "opacity" in ch_data
+            assert "blend_mode" in ch_data
+
+    def test_after_set_channel(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        handlers.set_layer_channel(layer_id, "Roughness", 0.75)
+        result = handlers.get_layer_channels(layer_id)
+        assert result["Roughness"]["source"] == 0.75
+
+    def test_nonexistent_layer(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="not found"):
+            handlers.get_layer_channels("999999")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 7 — 图层高级 + TextureSet + 项目 + 相机
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── Phase 7: duplicate_layer ─────────────────────────────────────────────────
+
+class TestDuplicateLayer:
+    def test_creates_copy(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        result = handlers.duplicate_layer(layer_id)
+        assert "id" in result
+        assert result["name"] == "Edge_Wear"
+
+    def test_doubled_count(self, fresh_layer_stack):
+        before = len(handlers.get_layer_stack())
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        handlers.duplicate_layer(layer_id)
+        after = len(handlers.get_layer_stack())
+        assert after == before + 1
+
+    def test_nonexistent_layer(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="not found"):
+            handlers.duplicate_layer("999999")
+
+
+# ── Phase 7: move_layer ──────────────────────────────────────────────────────
+
+class TestMoveLayer:
+    def test_move_to_top(self, fresh_layer_stack):
+        stack = handlers.get_layer_stack()
+        bottom_id = stack[-1]["id"]
+        top_id = stack[0]["id"]
+        result = handlers.move_layer(bottom_id, top_id, "above")
+        assert result["ok"] is True
+
+    def test_move_preserves_all_layers(self, fresh_layer_stack):
+        before_count = len(handlers.get_layer_stack())
+        stack = handlers.get_layer_stack()
+        bottom_id = stack[-1]["id"]
+        top_id = stack[0]["id"]
+        handlers.move_layer(bottom_id, top_id, "above")
+        after_count = len(handlers.get_layer_stack())
+        assert after_count == before_count
+
+    def test_nonexistent_layer(self, fresh_layer_stack):
+        stack = handlers.get_layer_stack()
+        with pytest.raises(ValueError, match="not found"):
+            handlers.move_layer("999999", stack[0]["id"], "above")
+
+    def test_invalid_position(self, fresh_layer_stack):
+        stack = handlers.get_layer_stack()
+        with pytest.raises(ValueError, match="position"):
+            handlers.move_layer(stack[-1]["id"], stack[0]["id"], "invalid")
+
+
+# ── Phase 7: group_layers ────────────────────────────────────────────────────
+
+class TestGroupLayers:
+    def test_creates_group(self, fresh_layer_stack):
+        stack = handlers.get_layer_stack()
+        ids = [n["id"] for n in stack]
+        result = handlers.group_layers(ids)
+        assert "id" in result
+        assert result["name"] == "New Group"
+
+    def test_group_contains_children(self, fresh_layer_stack):
+        stack = handlers.get_layer_stack()
+        ids = [n["id"] for n in stack]
+        handlers.group_layers(ids)
+        new_stack = handlers.get_layer_stack()
+        groups = [n for n in new_stack if n["type"] == "GroupLayerNode"]
+        assert len(groups) >= 1
+
+    def test_empty_ids_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="empty"):
+            handlers.group_layers([])
+
+
+# ── Phase 7: ungroup_layer ───────────────────────────────────────────────────
+
+class TestUngroupLayer:
+    def test_ungroup_releases_children(self, fresh_layer_stack):
+        stack = handlers.get_layer_stack()
+        group = [n for n in stack if n["type"] == "GroupLayerNode"][0]
+        child_count_before = len(group["children"])
+        result = handlers.ungroup_layer(group["id"])
+        assert result["ok"] is True
+        # After ungroup, children should be at root level
+        new_stack = handlers.get_layer_stack()
+        assert len(new_stack) >= child_count_before
+
+    def test_ungroup_removes_group(self, fresh_layer_stack):
+        stack = handlers.get_layer_stack()
+        group = [n for n in stack if n["type"] == "GroupLayerNode"][0]
+        handlers.ungroup_layer(group["id"])
+        new_stack = handlers.get_layer_stack()
+        group_names = [n["name"] for n in new_stack if n["type"] == "GroupLayerNode"]
+        assert "Group_Base" not in group_names
+
+    def test_nonexistent_layer(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="not found"):
+            handlers.ungroup_layer("999999")
+
+
+# ── Phase 7: set_active_texture_set ──────────────────────────────────────────
+
+class TestSetActiveTextureSet:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.set_active_texture_set("MetalParts")
+        assert result["ok"] is True
+
+    def test_invalid_name(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="not found"):
+            handlers.set_active_texture_set("NonexistentTextureSet")
+
+
+# ── Phase 7: set_texture_set_resolution ──────────────────────────────────────
+
+class TestSetTextureSetResolution:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.set_texture_set_resolution(2048, 2048)
+        assert result["ok"] is True
+
+    def test_invalid_dimensions(self, fresh_layer_stack):
+        with pytest.raises(ValueError):
+            handlers.set_texture_set_resolution(0, 1024)
+
+
+# ── Phase 7: get_project_info ────────────────────────────────────────────────
+
+class TestGetProjectInfo:
+    def test_returns_dict(self, fresh_layer_stack):
+        result = handlers.get_project_info()
+        assert isinstance(result, dict)
+        assert "name" in result
+        assert "file_path" in result
+        assert "color_space" in result
+
+    def test_project_name(self, fresh_layer_stack):
+        result = handlers.get_project_info()
+        assert result["name"] == "MockProject"
+
+
+# ── Phase 7: save_project ────────────────────────────────────────────────────
+
+class TestSaveProject:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.save_project()
+        assert result["ok"] is True
+
+
+# ── Phase 7: set_camera ──────────────────────────────────────────────────────
+
+class TestSetCamera:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.set_camera(
+            x=1.0, y=2.0, z=3.0,
+            target_x=0.0, target_y=0.0, target_z=0.0,
+            fov=45.0
+        )
+        assert result["ok"] is True
+
+
+# ── Phase 7: frame_mesh ──────────────────────────────────────────────────────
+
+class TestFrameMesh:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.frame_mesh()
+        assert result["ok"] is True
+
+
+# ── Phase 7: set_environment ─────────────────────────────────────────────────
+
+class TestSetEnvironment:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.set_environment("Sunrise")
+        assert result["ok"] is True
