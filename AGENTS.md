@@ -25,8 +25,10 @@ Phase 2 探索发现以下与文档/预期不符的实际 API，所有代码必�
 | `substance_painter.layers` | `substance_painter.layerstack` |
 | `substance_painter.__version__` | `substance_painter.application.version()` → `"10.0.1"` |
 | `is_enabled()` / `set_enabled()` | `is_visible()` / `set_visible()` |
-| `get_child_layers()` | `get_root_layer_nodes(node.get_stack())` |
-| 类型枚举 `"FILL"` / `"GROUP"` | `"FillLayer"` / `"GroupLayer"` |
+| `get_child_layers()` | `node.sub_layers()` (GroupLayerNode) |
+| `textureset.name` 是属性 | `ts.name()` 是方法，返回 `str` |
+| `textureset.get_resolution` | `ts.get_resolution()` 返回 `Resolution(width, height)` |
+| `type(node).__name__` | `"FillLayerNode"` / `"GroupLayerNode"` / `"PaintLayerNode"` |
 
 ---
 
@@ -99,10 +101,17 @@ HTTP handler 用 `threading.Event` 阻塞等待结果（timeout 10s）。
 ```
 
 **`sp_get_layer_stack`**
-返回完整图层树 JSON。
+返回当前活动纹理集的完整图层树 JSON。
 需要 Painter 里有打开的项目，否则报错。
 ```
 返回: [{"id": "...", "name": "Metal_Base", "type": "FillLayer", "visible": true}, ...]
+```
+
+**`sp_get_texture_sets(filter="")`**
+返回所有纹理集及其图层结构，支持名称过滤。
+需要打开项目且有纹理集。
+```
+返回: [{"id": "249", "name": "att_ammo_50b", "resolution": "4096x4096", "layers": [...]}, ...]
 ```
 
 **`sp_get_layer_properties(layer_id)`**

@@ -23,6 +23,7 @@
 | Smart Material 用 `layers` 模块 | `resource.search()` + `ls.insert_smart_material()` |
 | Smart Mask 直接插入 | 需先 `node.add_mask(White)` 再 `insert_smart_mask()` |
 | `schedule_on_ui_thread` 存在 | 不存在，用 QTimer 轮询队列 |
+| `substance_painter.textureset` | 返回所有纹理集，`.name()` 是方法，`.get_resolution()` 返回 `Resolution` 对象 |
 
 遇到 API 不确定时，先用 `sp_run_python` 探索，再写实现。
 
@@ -73,6 +74,7 @@
 - `start_iray_render()` — QTimer.singleShot 异步触发 Iray
 - `check_iray_render()` — 读取 iterationsLabel/timeLabel 监控渲染进度
 - `capture_viewport(mode="render")` — Iray 渲染完成后 Qt grab 截图
+- `get_texture_sets(filter)` — 返回所有纹理集及图层结构，支持名称过滤
 
 **Iray 工作流（方案 B — MCP 层独立 tool）：**
 ```
@@ -102,6 +104,7 @@
 - `.opencode/commands/check.md` — 健康检查一键命令
 - `.opencode/commands/paint.md` — 创作工作流命令
 - `.opencode/commands/export.md` — 导出命令
+- MCP tools 总计 16 个（含 `sp_get_texture_sets`）
 
 ---
 
