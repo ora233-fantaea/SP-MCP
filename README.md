@@ -65,23 +65,37 @@ python server/sp_mcp.py
 }
 ```
 
-## 🛠️ MCP Tools (主要工具集)
+## 🛠️ MCP Tools (全部 14 个工具)
 
-*   **读取类**:
-    *   `sp_ping`: 检查 Bridge 连通性及版本状态。
-    *   `sp_get_layer_stack`: 返回完整的图层树 JSON。
-    *   `sp_get_layer_properties`: 获取指定图层的详细属性。
-    *   `sp_capture_viewport`: 截取当前 3D 视口为 Base64 PNG（支持快速截屏模式与 Iray 渲染模式）。
-*   **操作类**:
-    *   `sp_add_fill_layer`: 在图层栈顶部新建填充图层。
-    *   `sp_set_layer_property`: 修改指定图层的属性（可见性、不透明度、名称、混合模式等）。
-    *   `sp_apply_smart_material`: 在图层中应用智能材质（Smart Material）。
-    *   `sp_add_smart_mask`: 为图层添加程序化遮罩（Smart Mask）。
-*   **导出类**:
+*   **连接与读取**:
+    *   `sp_ping`: 检查 Bridge 连通性及版本状态。任何操作前必须先调用。
+    *   `sp_get_layer_stack`: 返回完整的图层树 JSON（含 Group 子节点递归）。
+    *   `sp_get_layer_properties`: 获取指定图层的详细属性（opacity、blend_mode 等）。
+    *   `sp_list_shelf_materials`: 列出可用 Smart Material，支持关键词过滤。
+    *   `sp_capture_viewport`: 截取当前 3D 视口为 Base64 PNG（`mode="quick"` 快速截屏 / `mode="render"` Iray 渲染后截图）。
+*   **图层操作**:
+    *   `sp_add_fill_layer`: 在图层栈顶部新建填充图层（含颜色、通道、混合模式）。
+    *   `sp_set_layer_property`: 修改指定图层的属性（visible、opacity、name、blend_mode）。
+    *   `sp_apply_smart_material`: 对指定图层应用 Shelf 中的 Smart Material。
+    *   `sp_add_smart_mask`: 为图层添加程序化遮罩（Edge Wear / Dirt / Rust 等）。
+*   **Iray 渲染**:
+    *   `sp_set_iray_params`: 设置 Iray 渲染质量参数（采样数、时间、分辨率）。
+    *   `sp_start_iray_render`: 异步启动 Iray 渲染（不阻塞 HTTP）。
+    *   `sp_check_iray_render`: 轮询 Iray 渲染进度（iterations / time）。
+*   **导出**:
     *   `sp_export_textures`: 触发贴图一键导出。
+*   **调试**:
+    *   `sp_run_python`: 在 Painter 主线程执行任意 Python 代码（escape hatch）。
 
 ## 🤝 后续集成扩展
 结合 **SP2VTF** 工具（见项目规划），可以将导出的贴图一键转换为 Source 引擎（如 L4D2、CS 等游戏）兼容的 VTF 格式，实现一站式的自定义皮肤制作工作流。
+
+## 🔧 调试与排错
+
+*   Bridge 连接失败 → 检查 Painter 是否启动、插件是否加载
+*   日志文件 → `%USERPROFILE%\sp_bridge.log`
+*   热重载（不重启 Painter）：在 Python Console 执行 `import importlib, sp_bridge.handlers; importlib.reload(sp_bridge.handlers)`
+*   详见 [AGENTS.md](./AGENTS.md) 中的调试章节
 
 ---
 *本项目包含为 AI 开发设计的专用工作流设定与提示词机制，详情可参阅代码库内的 [AGENTS.md](./AGENTS.md) 与 [PHASES.md](./PHASES.md)。*
