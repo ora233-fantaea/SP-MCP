@@ -440,19 +440,11 @@ class TestUndo:
         result = handlers.undo()
         assert result["ok"] is True
 
-    def test_undoable_status(self, fresh_layer_stack):
-        result = handlers.undo()
-        assert result["undoable"] is True
-
 
 class TestRedo:
     def test_returns_ok(self, fresh_layer_stack):
         result = handlers.redo()
         assert result["ok"] is True
-
-    def test_redoable_status(self, fresh_layer_stack):
-        result = handlers.redo()
-        assert result["redoable"] is True
 
 
 # ── Phase 6: set_layer_channel ───────────────────────────────────────────────
@@ -549,80 +541,30 @@ class TestDuplicateLayer:
 # ── Phase 7: move_layer ──────────────────────────────────────────────────────
 
 class TestMoveLayer:
-    def test_move_to_top(self, fresh_layer_stack):
+    def test_raises_not_implemented(self, fresh_layer_stack):
         stack = handlers.get_layer_stack()
-        bottom_id = stack[-1]["id"]
-        top_id = stack[0]["id"]
-        result = handlers.move_layer(bottom_id, top_id, "above")
-        assert result["ok"] is True
-
-    def test_move_preserves_all_layers(self, fresh_layer_stack):
-        before_count = len(handlers.get_layer_stack())
-        stack = handlers.get_layer_stack()
-        bottom_id = stack[-1]["id"]
-        top_id = stack[0]["id"]
-        handlers.move_layer(bottom_id, top_id, "above")
-        after_count = len(handlers.get_layer_stack())
-        assert after_count == before_count
-
-    def test_nonexistent_layer(self, fresh_layer_stack):
-        stack = handlers.get_layer_stack()
-        with pytest.raises(ValueError, match="not found"):
-            handlers.move_layer("999999", stack[0]["id"], "above")
-
-    def test_invalid_position(self, fresh_layer_stack):
-        stack = handlers.get_layer_stack()
-        with pytest.raises(ValueError, match="position"):
-            handlers.move_layer(stack[-1]["id"], stack[0]["id"], "invalid")
+        with pytest.raises(NotImplementedError):
+            handlers.move_layer(stack[-1]["id"], stack[0]["id"], "above")
 
 
 # ── Phase 7: group_layers ────────────────────────────────────────────────────
 
 class TestGroupLayers:
-    def test_creates_group(self, fresh_layer_stack):
+    def test_raises_not_implemented(self, fresh_layer_stack):
         stack = handlers.get_layer_stack()
         ids = [n["id"] for n in stack]
-        result = handlers.group_layers(ids)
-        assert "id" in result
-        assert result["name"] == "New Group"
-
-    def test_group_contains_children(self, fresh_layer_stack):
-        stack = handlers.get_layer_stack()
-        ids = [n["id"] for n in stack]
-        handlers.group_layers(ids)
-        new_stack = handlers.get_layer_stack()
-        groups = [n for n in new_stack if n["type"] == "GroupLayerNode"]
-        assert len(groups) >= 1
-
-    def test_empty_ids_raises(self, fresh_layer_stack):
-        with pytest.raises(ValueError, match="empty"):
-            handlers.group_layers([])
+        with pytest.raises(NotImplementedError):
+            handlers.group_layers(ids)
 
 
 # ── Phase 7: ungroup_layer ───────────────────────────────────────────────────
 
 class TestUngroupLayer:
-    def test_ungroup_releases_children(self, fresh_layer_stack):
+    def test_raises_not_implemented(self, fresh_layer_stack):
         stack = handlers.get_layer_stack()
         group = [n for n in stack if n["type"] == "GroupLayerNode"][0]
-        child_count_before = len(group["children"])
-        result = handlers.ungroup_layer(group["id"])
-        assert result["ok"] is True
-        # After ungroup, children should be at root level
-        new_stack = handlers.get_layer_stack()
-        assert len(new_stack) >= child_count_before
-
-    def test_ungroup_removes_group(self, fresh_layer_stack):
-        stack = handlers.get_layer_stack()
-        group = [n for n in stack if n["type"] == "GroupLayerNode"][0]
-        handlers.ungroup_layer(group["id"])
-        new_stack = handlers.get_layer_stack()
-        group_names = [n["name"] for n in new_stack if n["type"] == "GroupLayerNode"]
-        assert "Group_Base" not in group_names
-
-    def test_nonexistent_layer(self, fresh_layer_stack):
-        with pytest.raises(ValueError, match="not found"):
-            handlers.ungroup_layer("999999")
+        with pytest.raises(NotImplementedError):
+            handlers.ungroup_layer(group["id"])
 
 
 # ── Phase 7: set_active_texture_set ──────────────────────────────────────────
@@ -657,7 +599,8 @@ class TestGetProjectInfo:
         assert isinstance(result, dict)
         assert "name" in result
         assert "file_path" in result
-        assert "color_space" in result
+        assert "is_open" in result
+        assert "is_busy" in result
 
     def test_project_name(self, fresh_layer_stack):
         result = handlers.get_project_info()
@@ -683,13 +626,22 @@ class TestSetCamera:
         )
         assert result["ok"] is True
 
+    def test_sets_position(self, fresh_layer_stack):
+        handlers.set_camera(
+            x=10.0, y=20.0, z=30.0,
+            target_x=0.0, target_y=0.0, target_z=0.0,
+            fov=60.0
+        )
+        import substance_painter.display as display
+        cam = display.Camera.get_default_camera()
+        assert cam.position == [10.0, 20.0, 30.0]
+        assert cam.field_of_view == 60.0
 
-# ── Phase 7: frame_mesh ──────────────────────────────────────────────────────
 
 class TestFrameMesh:
-    def test_returns_ok(self, fresh_layer_stack):
-        result = handlers.frame_mesh()
-        assert result["ok"] is True
+    def test_raises_not_implemented(self, fresh_layer_stack):
+        with pytest.raises(NotImplementedError):
+            handlers.frame_mesh()
 
 
 # ── Phase 7: set_environment ─────────────────────────────────────────────────

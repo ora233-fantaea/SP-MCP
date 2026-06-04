@@ -118,8 +118,19 @@ def _make_sp_mock():
             self._sources[ch] = value
 
         def get_source(self, ch):
-            """返回指定通道的 source 值。"""
-            return self._sources.get(ch)
+            """返回指定通道的 source 值。包装 cm.Color 为带 get_color() 的对象。"""
+            val = self._sources.get(ch)
+            if val is None:
+                return None
+            if hasattr(val, "value_raw"):
+                # cm.Color → 包装为 SourceUniformColor-like 对象
+                class _MockSource:
+                    def __init__(self, color):
+                        self._color = color
+                    def get_color(self):
+                        return self._color
+                return _MockSource(val)
+            return val
 
         def add_child(self, child):
             child._parent = self
@@ -264,6 +275,20 @@ def _make_sp_mock():
     layerstack._group_stacks = _group_stacks
     layerstack._build_default_stack = _build_default_stack
 
+    # ── substance_painter.colormanagement ──
+    colormanagement = types.ModuleType("substance_painter.colormanagement")
+
+    class MockCMColor:
+        def __init__(self, r, g, b):
+            self._r, self._g, self._b = r, g, b
+        @property
+        def value_raw(self):
+            return (self._r, self._g, self._b)
+        @property
+        def value(self):
+            return [self._r, self._g, self._b]
+    colormanagement.Color = MockCMColor
+
     # ── substance_painter.textureset ──
     textureset = types.ModuleType("substance_painter.textureset")
 
@@ -302,7 +327,42 @@ def _make_sp_mock():
     textureset.Resolution = MockResolution
     textureset._mock_texture_sets = _mock_texture_sets
 
-    # ── substance_painter.undo ──
+    # ── substance_painter.display ──
+    display_mod = types.ModuleType("substance_painter.display")
+
+    class MockCamera:
+        _position = [0.0, 0.0, 5.0]
+        _rotation = [0.0, 0.0, 0.0]
+        _fov = 45.0
+        @property
+        def position(self): return list(self._position)
+        @position.setter
+        def position(self, v): self._position = list(v)
+        @property
+        def rotation(self): return list(self._rotation)
+        @rotation.setter
+        def rotation(self, v): self._rotation = list(v)
+        @property
+        def field_of_view(self): return self._fov
+        @field_of_view.setter
+        def field_of_view(self, v): self._fov = v
+
+    _mock_camera = MockCamera()
+    display_mod.Camera = type("Camera", (), {
+        "get_default_camera": staticmethod(lambda: _mock_camera),
+    })
+    display_mod._mock_camera = _mock_camera
+
+    _mock_env_resource = None
+    def _set_environment_resource(res_id):
+        nonlocal _mock_env_resource
+        _mock_env_resource = res_id
+    def _get_environment_resource():
+        return _mock_env_resource
+    display_mod.set_environment_resource = _set_environment_resource
+    display_mod.get_environment_resource = _get_environment_resource
+
+    # ── substance_painter.undo (legacy, not used by new handlers) ──
     undo_mod = types.ModuleType("substance_painter.undo")
     undo_mod.undo = lambda: None
     undo_mod.redo = lambda: None
@@ -313,22 +373,9 @@ def _make_sp_mock():
     project_mod = types.ModuleType("substance_painter.project")
     project_mod.name = lambda: "MockProject"
     project_mod.file_path = lambda: "/mock/project.spp"
-    project_mod.color_space = lambda: "sRGB"
+    project_mod.is_open = lambda: True
+    project_mod.is_busy = lambda: False
     project_mod.save = lambda: None
-
-    # ── substance_painter.camera ──
-    camera_mod = types.ModuleType("substance_painter.camera")
-    camera_mod.set_position = lambda x, y, z: None
-    camera_mod.set_target = lambda x, y, z: None
-    camera_mod.set_fov = lambda fov: None
-    camera_mod.frame_all = lambda: None
-    camera_mod.get_position = lambda: (0.0, 0.0, 5.0)
-    camera_mod.get_target = lambda: (0.0, 0.0, 0.0)
-
-    # ── substance_painter.environment ──
-    env_mod = types.ModuleType("substance_painter.environment")
-    env_mod.set_preset = lambda name: None
-    env_mod.get_preset = lambda: "Studio"
 
     # ── substance_painter.export ──
     export = types.ModuleType("substance_painter.export")
@@ -378,6 +425,9 @@ def _make_sp_mock():
             MockResource("Dirt", "smartmask"),
             MockResource("Grunge Scratches", "smartmask"),
             MockResource("Rust", "smartmask"),
+            MockResource("Studio", "environment"),
+            MockResource("Sunrise", "environment"),
+            MockResource("Night", "environment"),
         ]
         if not query:
             return all_resources
@@ -476,13 +526,19 @@ def _make_sp_mock():
         def currentText(self): return self._items[self._current] if self._items else ""
 
     class _MockQAction(_MockWidget):
-        def __init__(self, name="", parent=None, enabled=True):
+        def __init__(self, name="", parent=None, enabled=True, shortcut=""):
             super().__init__(name, parent)
             self._text = name
             self._enabled = enabled
+            self._shortcut = shortcut
         def text(self): return self._text
         def isEnabled(self): return self._enabled
         def trigger(self): pass
+        def shortcut(self):
+            class _MockShortcut:
+                def __init__(self, s): self._s = s
+                def toString(self): return self._s
+            return _MockShortcut(self._shortcut)
 
     class _MockQDockWidget(_MockWidget):
         def __init__(self, name="", parent=None):
@@ -563,6 +619,12 @@ def _make_sp_mock():
     _iray_action = _MockQAction("Rendering (Iray)", enabled=True)
     _iray_action.setParent(_mock_main_window)
 
+    # Undo/Redo QActions
+    _undo_action = _MockQAction("Undo", enabled=True, shortcut="Ctrl+Z")
+    _undo_action.setParent(_mock_main_window)
+    _redo_action = _MockQAction("Redo", enabled=True, shortcut="Ctrl+Y")
+    _redo_action.setParent(_mock_main_window)
+
     # Mock QOpenGLWidget (viewport)
     _mock_viewport = _MockQOpenGLWidget("Viewer3D", _mock_main_window)
 
@@ -575,11 +637,11 @@ def _make_sp_mock():
     sp.application   = app
     sp.ui            = ui
     sp.layerstack    = layerstack
+    sp.colormanagement = colormanagement
     sp.textureset    = textureset
     sp.undo          = undo_mod
     sp.project       = project_mod
-    sp.camera        = camera_mod
-    sp.environment   = env_mod
+    sp.display       = display_mod
     sp.export        = export
     sp.resource      = resource
 
@@ -588,11 +650,11 @@ def _make_sp_mock():
     sys.modules["substance_painter.ui"]         = ui
     sys.modules["substance_painter.logging"]    = logging_mod
     sys.modules["substance_painter.layerstack"]  = layerstack
+    sys.modules["substance_painter.colormanagement"] = colormanagement
     sys.modules["substance_painter.textureset"]  = textureset
     sys.modules["substance_painter.undo"]        = undo_mod
     sys.modules["substance_painter.project"]     = project_mod
-    sys.modules["substance_painter.camera"]      = camera_mod
-    sys.modules["substance_painter.environment"] = env_mod
+    sys.modules["substance_painter.display"]     = display_mod
     sys.modules["substance_painter.export"]      = export
     sys.modules["substance_painter.resource"]    = resource
 

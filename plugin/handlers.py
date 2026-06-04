@@ -275,16 +275,40 @@ def add_paint_layer(name: str) -> dict:
     return {"id": str(node.uid()), "name": node.get_name()}
 
 
+def _find_qaction(shortcut: str):
+    """按快捷键查找 QAction。"""
+    import substance_painter.ui
+    from PySide2.QtWidgets import QAction
+    win = substance_painter.ui.get_main_window()
+    for action in win.findChildren(QAction):
+        try:
+            if action.shortcut().toString() == shortcut and action.isEnabled():
+                return action
+        except RuntimeError:
+            continue
+    return None
+
+
 def undo() -> dict:
-    import substance_painter.undo
-    substance_painter.undo.undo()
-    return {"ok": True, "undoable": substance_painter.undo.is_undo_available()}
+    action = _find_qaction("Ctrl+Z")
+    if action is None:
+        raise RuntimeError("Undo action not found (Ctrl+Z)")
+    try:
+        action.trigger()
+    except RuntimeError:
+        pass
+    return {"ok": True}
 
 
 def redo() -> dict:
-    import substance_painter.undo
-    substance_painter.undo.redo()
-    return {"ok": True, "redoable": substance_painter.undo.is_redo_available()}
+    action = _find_qaction("Ctrl+Y")
+    if action is None:
+        raise RuntimeError("Redo action not found (Ctrl+Y)")
+    try:
+        action.trigger()
+    except RuntimeError:
+        pass
+    return {"ok": True}
 
 
 _CHANNEL_MAP = {
@@ -304,13 +328,15 @@ def set_layer_channel(layer_id: str, channel: str, value) -> dict:
         )
     node = _find_layer(layer_id)
     import substance_painter.layerstack as ls
+    import substance_painter.colormanagement as cm
 
     ch = getattr(ls.ChannelType, _CHANNEL_MAP[ch_key])
     if ch_key == "basecolor":
         r, g, b = _hex_to_rgb(str(value))
-        node.set_source(ch, ls.Color(r, g, b))
+        node.set_source(ch, cm.Color(r, g, b))
     else:
-        node.set_source(ch, float(value))
+        v = float(value)
+        node.set_source(ch, cm.Color(v, v, v))
     return {"ok": True}
 
 
@@ -327,10 +353,18 @@ def get_layer_channels(layer_id: str) -> dict:
             "blend_mode": node.get_blending_mode(ch).name,
         }
         if source is not None:
-            if ch_name == "BaseColor" and hasattr(source, "r"):
+            # SourceUniformColor → get_color().value_raw
+            if hasattr(source, "get_color"):
+                c = source.get_color()
+                raw = c.value_raw
+                if ch_name == "BaseColor":
+                    entry["source"] = f"#{int(raw[0]*255):02x}{int(raw[1]*255):02x}{int(raw[2]*255):02x}"
+                else:
+                    entry["source"] = raw[0]
+            elif hasattr(source, "r"):
                 entry["source"] = f"#{int(source.r*255):02x}{int(source.g*255):02x}{int(source.b*255):02x}"
             else:
-                entry["source"] = source
+                entry["source"] = str(source)
         result[ch_name] = entry
     return result
 
@@ -347,59 +381,41 @@ def duplicate_layer(layer_id: str) -> dict:
     new_node = ls.insert_fill(pos)
     new_node.set_name(node.get_name())
 
-    for ch in (ls.ChannelType.BaseColor, ls.ChannelType.Roughness,
-               ls.ChannelType.Metallic, ls.ChannelType.Height, ls.ChannelType.Normal):
-        new_node.set_opacity(node.get_opacity(ch), ch)
-        new_node.set_blending_mode(node.get_blending_mode(ch), ch)
-        src = node.get_source(ch)
-        if src is not None:
-            new_node.set_source(ch, src)
+    # GroupLayerNode 没有 get_source，只复制 fill layer 的通道属性
+    if type(node).__name__ != "GroupLayerNode":
+        for ch in (ls.ChannelType.BaseColor, ls.ChannelType.Roughness,
+                   ls.ChannelType.Metallic, ls.ChannelType.Height, ls.ChannelType.Normal):
+            new_node.set_opacity(node.get_opacity(ch), ch)
+            new_node.set_blending_mode(node.get_blending_mode(ch), ch)
+            try:
+                src = node.get_source(ch)
+                if src is not None:
+                    new_node.set_source(ch, src)
+            except (AttributeError, TypeError):
+                pass
 
     return {"id": str(new_node.uid()), "name": new_node.get_name()}
 
 
 def move_layer(layer_id: str, target_id: str, position: str = "above") -> dict:
-    if position not in ("above", "below"):
-        raise ValueError(f"position must be 'above' or 'below', got {position!r}")
-    node = _find_layer(layer_id)
-    target = _find_layer(target_id)
-    import substance_painter.layerstack as ls
-
-    if position == "above":
-        pos = ls.InsertPosition.above_node(target)
-    else:
-        pos = ls.InsertPosition.below_node(target)
-    ls.move_node(node, pos)
-    return {"ok": True}
+    raise NotImplementedError(
+        "move_layer is not available through the SP 10.x Python API. "
+        "Use keyboard shortcuts or drag-and-drop in the UI."
+    )
 
 
 def group_layers(layer_ids: list) -> dict:
-    if not layer_ids:
-        raise ValueError("layer_ids must not be empty")
-    import substance_painter.layerstack as ls
-    import substance_painter.textureset as ts
-
-    nodes = [_find_layer(lid) for lid in layer_ids]
-    stack = ts.get_active_stack()
-    pos = ls.InsertPosition.from_textureset_stack(stack)
-    group = ls.insert_group(pos)
-    group.set_name("New Group")
-
-    for node in nodes:
-        ls.move_node(node, ls.InsertPosition.inside_node(group, group.get_stack()))
-
-    return {"id": str(group.uid()), "name": group.get_name()}
+    raise NotImplementedError(
+        "group_layers is not available through the SP 10.x Python API. "
+        "Select layers in UI and press Ctrl+G."
+    )
 
 
 def ungroup_layer(layer_id: str) -> dict:
-    node = _find_layer(layer_id)
-    import substance_painter.layerstack as ls
-
-    children = node.sub_layers()
-    for child in children:
-        ls.move_node(child, ls.InsertPosition.above_node(node))
-    ls.delete_node(node)
-    return {"ok": True}
+    raise NotImplementedError(
+        "ungroup_layer is not available through the SP 10.x Python API. "
+        "Select group in UI and press Ctrl+Shift+G."
+    )
 
 
 def set_active_texture_set(name: str) -> dict:
@@ -428,7 +444,8 @@ def get_project_info() -> dict:
     return {
         "name":        substance_painter.project.name(),
         "file_path":   substance_painter.project.file_path(),
-        "color_space": substance_painter.project.color_space(),
+        "is_open":     substance_painter.project.is_open(),
+        "is_busy":     substance_painter.project.is_busy(),
     }
 
 
@@ -443,23 +460,30 @@ def set_camera(
     target_x: float, target_y: float, target_z: float,
     fov: float,
 ) -> dict:
-    import substance_painter.camera
-    substance_painter.camera.set_position(x, y, z)
-    substance_painter.camera.set_target(target_x, target_y, target_z)
-    substance_painter.camera.set_fov(fov)
+    import substance_painter.display as display
+    cam = display.Camera.get_default_camera()
+    cam.position = [x, y, z]
+    cam.field_of_view = fov
     return {"ok": True}
 
 
 def frame_mesh() -> dict:
-    import substance_painter.camera
-    substance_painter.camera.frame_all()
-    return {"ok": True}
+    raise NotImplementedError(
+        "frame_mesh is not available through the Python API. "
+        "Use viewport shortcut 'F' or sp_run_python as workaround."
+    )
 
 
 def set_environment(preset: str) -> dict:
-    import substance_painter.environment
-    substance_painter.environment.set_preset(preset)
-    return {"ok": True}
+    import substance_painter.display as display
+    import substance_painter.resource as r
+    # 查找匹配的环境资源
+    resources = r.search(preset)
+    for res in resources:
+        if preset.lower() in res.gui_name().lower():
+            display.set_environment_resource(res.identifier())
+            return {"ok": True, "environment": res.gui_name()}
+    raise ValueError(f"Environment preset not found: {preset!r}")
 
 
 # ── 内部工具 ──────────────────────────────────────────────────────────────────

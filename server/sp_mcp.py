@@ -309,7 +309,7 @@ def sp_add_paint_layer(name: str) -> dict:
 def sp_undo() -> dict:
     """
     撤销上一步操作。
-    返回是否仍可继续 undo。
+    通过触发 Painter 的 Ctrl+Z 动作实现。
     """
     return sp.call("undo")
 
@@ -318,7 +318,7 @@ def sp_undo() -> dict:
 def sp_redo() -> dict:
     """
     重做上一步被撤销的操作。
-    返回是否仍可继续 redo。
+    通过触发 Painter 的 Ctrl+Y 动作实现。
     """
     return sp.call("redo")
 
@@ -437,7 +437,7 @@ def sp_set_texture_set_resolution(width: int, height: int) -> dict:
 def sp_get_project_info() -> dict:
     """
     读取当前项目信息。
-    返回：name、file_path、color_space。
+    返回：name、file_path、is_open、is_busy。
     """
     return sp.call("get_project_info")
 
