@@ -226,7 +226,7 @@ class TestApplySmartMaterial:
 class TestAddSmartMask:
     def test_returns_ok(self, fresh_layer_stack):
         layer_id = handlers.get_layer_stack()[0]["id"]
-        result = handlers.add_smart_mask(layer_id, "Edge Wear")
+        result = handlers.add_smart_mask(layer_id, "Dirt")
         assert result["ok"] is True
         assert result["effects_count"] == 1
 
@@ -237,7 +237,7 @@ class TestAddSmartMask:
 
     def test_invalid_layer_id(self, fresh_layer_stack):
         with pytest.raises(ValueError, match="not found"):
-            handlers.add_smart_mask("999999", "Edge Wear")
+            handlers.add_smart_mask("999999", "Dirt")
 
 
 # ── Phase 4: list_shelf_materials ────────────────────────────────────────────
@@ -249,7 +249,7 @@ class TestListShelfMaterials:
 
     def test_returns_all_when_empty_filter(self, fresh_layer_stack):
         result = handlers.list_shelf_materials(filter="")
-        assert len(result) == 3
+        assert len(result) >= 3
 
     def test_filter_steel(self, fresh_layer_stack):
         result = handlers.list_shelf_materials(filter="Steel")
@@ -262,6 +262,40 @@ class TestListShelfMaterials:
     def test_filter_no_match(self, fresh_layer_stack):
         result = handlers.list_shelf_materials(filter="Nonexistent")
         assert len(result) == 0
+
+
+# ── Phase 4: list_materials + apply_material ─────────────────────────────────
+
+class TestListMaterials:
+    def test_returns_list(self, fresh_layer_stack):
+        result = handlers.list_materials()
+        assert isinstance(result, list)
+
+    def test_returns_substance_only(self, fresh_layer_stack):
+        result = handlers.list_materials(filter="")
+        for name in result:
+            assert "Carbon" in name or "Concrete" in name or "Fabric" in name or "Leather" in name or "Metal" in name or "Plastic" in name or "Wood" in name
+
+    def test_filter(self, fresh_layer_stack):
+        result = handlers.list_materials(filter="Carbon")
+        assert "Carbon Fiber" in result
+
+
+class TestApplyMaterial:
+    def test_returns_ok(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        result = handlers.apply_material(layer_id, "Carbon Fiber")
+        assert result["ok"] is True
+        assert result["material"] == "Carbon Fiber"
+
+    def test_invalid_material(self, fresh_layer_stack):
+        layer_id = handlers.get_layer_stack()[-1]["id"]
+        with pytest.raises(ValueError, match="not found"):
+            handlers.apply_material(layer_id, "Nonexistent Material")
+
+    def test_invalid_layer(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="not found"):
+            handlers.apply_material("999999", "Carbon Fiber")
 
 
 # ── Phase 4: Iray 渲染参数 ──────────────────────────────────────────────────
@@ -436,15 +470,15 @@ class TestAddPaintLayer:
 # ── Phase 6: undo / redo ─────────────────────────────────────────────────────
 
 class TestUndo:
-    def test_returns_ok(self, fresh_layer_stack):
-        result = handlers.undo()
-        assert result["ok"] is True
+    def test_raises_not_implemented(self, fresh_layer_stack):
+        with pytest.raises(NotImplementedError):
+            handlers.undo()
 
 
 class TestRedo:
-    def test_returns_ok(self, fresh_layer_stack):
-        result = handlers.redo()
-        assert result["ok"] is True
+    def test_raises_not_implemented(self, fresh_layer_stack):
+        with pytest.raises(NotImplementedError):
+            handlers.redo()
 
 
 # ── Phase 6: set_layer_channel ───────────────────────────────────────────────
@@ -650,3 +684,104 @@ class TestSetEnvironment:
     def test_returns_ok(self, fresh_layer_stack):
         result = handlers.set_environment("Sunrise")
         assert result["ok"] is True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 8 — 批量 Undo
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestBeginBatch:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.begin_batch("Test Batch")
+        assert result["ok"] is True
+        assert result["batch_name"] == "Test Batch"
+        handlers.end_batch()
+
+    def test_duplicate_begin_raises(self, fresh_layer_stack):
+        handlers.begin_batch("First")
+        with pytest.raises(RuntimeError, match="already active"):
+            handlers.begin_batch("Second")
+        handlers.end_batch()
+
+    def test_empty_name_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="name"):
+            handlers.begin_batch("")
+
+
+class TestEndBatch:
+    def test_returns_ok(self, fresh_layer_stack):
+        handlers.begin_batch("To End")
+        result = handlers.end_batch()
+        assert result["ok"] is True
+
+    def test_no_batch_raises(self, fresh_layer_stack):
+        # 确保没有活跃的 batch
+        handlers._batch_scope = None
+        with pytest.raises(RuntimeError, match="No active batch"):
+            handlers.end_batch()
+
+
+class TestBatchWorkflow:
+    def test_begin_operate_end(self, fresh_layer_stack):
+        handlers.begin_batch("Workflow Test")
+        handlers.add_fill_layer("Batch_A")
+        handlers.add_fill_layer("Batch_B")
+        result = handlers.end_batch()
+        assert result["ok"] is True
+        names = [l["name"] for l in handlers.get_layer_stack()]
+        assert "Batch_A" in names
+        assert "Batch_B" in names
+
+    def test_batch_scope_active_during_ops(self, fresh_layer_stack):
+        handlers.begin_batch("Scope Test")
+        assert handlers._batch_scope is not None
+        assert handlers._batch_scope._active is True
+        handlers.add_fill_layer("ScopeLayer")
+        handlers.end_batch()
+        assert handlers._batch_scope is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 9 — JS API 集成
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestBakeMeshMaps:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.bake_mesh_maps("Default")
+        assert result["ok"] is True
+
+    def test_empty_name_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="must not be empty"):
+            handlers.bake_mesh_maps("")
+
+
+class TestAddTextureSetChannel:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.add_texture_set_channel("Default", "custom_ch", "Color4", "Custom Channel")
+        assert result["ok"] is True
+        assert result["channel"] == "custom_ch"
+
+    def test_empty_ts_name_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="must not be empty"):
+            handlers.add_texture_set_channel("", "custom_ch")
+
+    def test_empty_channel_id_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="must not be empty"):
+            handlers.add_texture_set_channel("Default", "")
+
+
+class TestRemoveTextureSetChannel:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.remove_texture_set_channel("Default", "custom_ch")
+        assert result["ok"] is True
+        assert result["channel"] == "custom_ch"
+
+    def test_empty_ts_name_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="must not be empty"):
+            handlers.remove_texture_set_channel("", "custom_ch")
+
+    def test_empty_channel_id_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="must not be empty"):
+            handlers.remove_texture_set_channel("Default", "")

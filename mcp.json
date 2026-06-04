@@ -23,7 +23,9 @@
     { "name": "sp_set_layer_property",       "description": "Modify a layer property" },
     { "name": "sp_apply_smart_material",     "description": "Apply a Smart Material from Shelf" },
     { "name": "sp_add_smart_mask",           "description": "Add a procedural mask to a layer" },
-    { "name": "sp_list_shelf_materials",     "description": "List available Smart Materials" },
+    { "name": "sp_list_shelf_materials",  "description": "List available Smart Materials" },
+    { "name": "sp_list_materials",        "description": "List available regular materials (SUBSTANCE)" },
+    { "name": "sp_apply_material",        "description": "Apply a regular material to a layer" },
     { "name": "sp_set_iray_params",          "description": "Set Iray render quality parameters" },
     { "name": "sp_start_iray_render",        "description": "Start Iray render asynchronously" },
     { "name": "sp_check_iray_render",        "description": "Check Iray render progress" },
@@ -47,6 +49,11 @@
     { "name": "sp_save_project",             "description": "Save the current project" },
     { "name": "sp_set_camera",               "description": "Set camera position and FOV" },
     { "name": "sp_frame_mesh",               "description": "Frame the mesh in the viewport" },
-    { "name": "sp_set_environment",          "description": "Switch HDRI environment preset" }
+    { "name": "sp_set_environment",          "description": "Switch HDRI environment preset" },
+    { "name": "sp_begin_batch",              "description": "Begin batch operation (single undo)" },
+    { "name": "sp_end_batch",                "description": "End batch operation" },
+    { "name": "sp_bake_mesh_maps",           "description": "Bake mesh maps via JS API" },
+    { "name": "sp_add_texture_set_channel",  "description": "Add channel to texture set via JS API" },
+    { "name": "sp_remove_texture_set_channel","description": "Remove channel from texture set via JS API" }
   ]
 }

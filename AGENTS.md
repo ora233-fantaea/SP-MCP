@@ -29,7 +29,24 @@ Phase 2 探索发现以下与文档/预期不符的实际 API，所有代码必�
 | `textureset.name` 是属性 | `ts.name()` 是方法，返回 `str` |
 | `textureset.get_resolution` | `ts.get_resolution()` 返回 `Resolution(width, height)` |
 | `type(node).__name__` | `"FillLayerNode"` / `"GroupLayerNode"` / `"PaintLayerNode"` |
-| `type(node).__name__` | `"FillLayerNode"` / `"GroupLayerNode"` / `"PaintLayerNode"` |
+| `get_root_layer_nodes()` 返回 int ID | 返回 `List[Node]` 节点对象 |
+| 节点类型 `node.get_type().name` | `type(node).__name__` → `"FillLayerNode"` / `"GroupLayerNode"` |
+| `get_opacity()` 无参数 | `get_opacity(ChannelType.BaseColor)` 需要 ChannelType |
+| 类型枚举 `"FILL"` / `"GROUP"` | `"FillLayerNode"` / `"GroupLayerNode"` |
+| Smart Material 用 `layers` 模块 | `resource.search()` + `ls.insert_smart_material()` |
+| Smart Mask 直接插入 | 需先 `node.add_mask(White)` 再 `insert_smart_mask()` |
+| `schedule_on_ui_thread` 存在 | 不存在，用 QTimer 轮询队列 |
+| `substance_painter.camera` | 不存在，相机 API 在 `substance_painter.display.Camera` |
+| `substance_painter.environment` | 不存在，环境 API 在 `substance_painter.display.set_environment_resource()` |
+| Scalar 通道用 `ls.Color` | 必须用 `colormanagement.Color(v,v,v)` |
+| `node.get_source()` 返回 Color | 返回 `SourceUniformColor`，需 `.get_color().value_raw` 取值 |
+| `move_node()` / `duplicate_node()` | SP 10.x 不存在，用 UI 操作 |
+| `substance_painter.undo` | 不存在，用 `ScopedModification` 批量合并 + 用户 Ctrl+Z |
+| `ScopedModification` 只能 `with` | 支持手动 `__enter__()` / `__exit__()` 跨 HTTP 调用 |
+| `substance_painter.js` | JS API 入口，`js.evaluate("alg.xxx")` 调用 |
+| Baking 用 Python API | 不存在，用 `js.evaluate("alg.baking.bake(name)")` |
+| Texture Set 通道管理 | Python API 不完整，用 `js.evaluate("alg.texturesets.addChannel(...)")` |
+| `alg.ui.clickButton` | 存在但有 `findChild` 错误，暂不可用 |
 
 ---
 
@@ -163,7 +180,7 @@ prop 可选值：`opacity` / `visible` / `name` / `blend_mode`
 **`sp_check_iray_render()`**
 检查 Iray 渲染状态，返回 iterations 和 time。
 
-### Phase 6 — 图层基础 + 通道（待实现）
+### Phase 6 — 图层基础 + 通道
 
 **`sp_delete_layer(layer_id)`**
 删除指定图层。
@@ -176,6 +193,8 @@ prop 可选值：`opacity` / `visible` / `name` / `blend_mode`
 
 **`sp_undo()` / `sp_redo()`**
 撤销 / 重做上一步操作。
+**SP 10.x 无 Python API，已标记 NotImplementedError。**
+用 Ctrl+Z / Ctrl+Y 在 Painter UI 中操作。
 
 **`sp_set_layer_channel(layer_id, channel, value)`**
 为指定通道设定数值。channel: `"Roughness"` / `"Metallic"` / `"Height"` / `"BaseColor"`。
@@ -184,19 +203,25 @@ prop 可选值：`opacity` / `visible` / `name` / `blend_mode`
 **`sp_get_layer_channels(layer_id)`**
 返回所有通道的 opacity、blend_mode、source 值。
 
-### Phase 7 — 图层高级 + TextureSet + 项目 + 相机（待实现）
+### Phase 7 — 图层高级 + TextureSet + 项目 + 相机
 
 **`sp_duplicate_layer(layer_id)`**
 复制图层，新图层在原图层上方。
 
 **`sp_move_layer(layer_id, target_id, position)`**
 移动图层到目标图层上方或下方。position: `"above"` / `"below"`。
+**SP 10.x 无 Python API，已标记 NotImplementedError。**
+用 UI 拖拽或 Ctrl+↑/↓。
 
 **`sp_group_layers(layer_ids)`**
 将多个图层打包进新分组。
+**SP 10.x 无 Python API，已标记 NotImplementedError。**
+用 Ctrl+G。
 
 **`sp_ungroup_layer(layer_id)`**
 解散分组，子层提升到父级。
+**SP 10.x 无 Python API，已标记 NotImplementedError。**
+用 Ctrl+Shift+G。
 
 **`sp_set_active_texture_set(name)`**
 切换当前操作的纹理集。
@@ -218,6 +243,46 @@ prop 可选值：`opacity` / `visible` / `name` / `blend_mode`
 
 **`sp_set_environment(preset)`**
 切换 HDRI 环境光预设。
+
+### Phase 8 — 批量 Undo
+
+**`sp_begin_batch(name)`**
+开始批量操作。后续 layer 操作将合并为单条 undo。
+基于 `layerstack.ScopedModification`，用户在 SP 按 Ctrl+Z 一次撤销整批操作。
+
+**`sp_end_batch()`**
+结束批量操作，合并为单条 undo。
+
+**使用示例：**
+```
+sp_begin_batch("Apply Rust Effect")
+  sp_add_fill_layer("Rust_Base")
+  sp_set_layer_channel("xxx", "Roughness", 0.8)
+  sp_add_smart_mask("xxx", "Edge Wear")
+sp_end_batch()
+→ 用户按 Ctrl+Z 一次撤销全部 3 个操作
+```
+
+### Phase 9 — JS API 集成（待实现）
+
+通过 `sp.js.evaluate()` 调用 SP 的 `alg` JS API，补上 Python API 缺失的功能。
+
+**`sp_bake_mesh_maps(texture_set_name)`** — 烘焙 mesh maps（AO/Curvature/Normal 等）。
+需要 SP 10.0+。通过 `alg.baking.bake()` 实现。
+
+**`sp_add_texture_set_channel(texture_set_name, channel_id, channel_format, channel_label)`** — 给纹理集添加通道。
+通过 `alg.texturesets.addChannel()` 实现。
+
+**`sp_remove_texture_set_channel(texture_set_name, channel_id)`** — 删除纹理集通道。
+通过 `alg.texturesets.removeChannel()` 实现。
+
+**JS API 调用方式：**
+```python
+# 在 handler 中调用 JS API
+import substance_painter.js as js
+result = js.evaluate("alg.baking.bake('textureSetName')")
+# 返回值是 JSON 字符串，需要 json.loads() 解析
+```
 
 ---
 

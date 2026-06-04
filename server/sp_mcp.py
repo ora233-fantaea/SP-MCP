@@ -168,6 +168,33 @@ def sp_add_smart_mask(layer_id: str, mask_name: str) -> dict:
     })
 
 
+@mcp.tool()
+def sp_list_materials(filter: str = "") -> list:
+    """
+    列出 Shelf 中可用的普通材质（SUBSTANCE 类型），支持关键词过滤。
+    示例：sp_list_materials(filter="carbon") → ["Carbon Fiber", ...]
+    需要 SP 10.0+。
+    """
+    return sp.call("list_materials", {"filter": filter})
+
+
+@mcp.tool()
+def sp_apply_material(layer_id: str, material_name: str) -> dict:
+    """
+    将普通材质（SUBSTANCE 类型）应用到指定图层的所有通道。
+    调用前先用 sp_list_materials 确认 material_name 的准确拼写。
+    需要 SP 10.0+。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    if not material_name:
+        raise ValueError("material_name must not be empty")
+    return sp.call("apply_material", {
+        "layer_id":      layer_id,
+        "material_name": material_name,
+    })
+
+
 # ── 视觉反馈 ──────────────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -487,6 +514,93 @@ def sp_set_environment(preset: str) -> dict:
     preset: 预设名称（如 "Sunrise", "Studio", "Night"）。
     """
     return sp.call("set_environment", {"preset": preset})
+
+
+# ── Phase 8 — 批量 Undo ────────────────────────────────────────────────────
+
+@mcp.tool()
+def sp_begin_batch(name: str) -> dict:
+    """
+    开始批量操作。后续 layer 操作将合并为单条 undo。
+    基于 `layerstack.ScopedModification`，用户在 SP 按 Ctrl+Z 一次撤销整批操作。
+
+    使用示例：
+    sp_begin_batch("Apply Rust Effect")
+      sp_add_fill_layer("Rust_Base")
+      sp_set_layer_channel("xxx", "Roughness", 0.8)
+      sp_add_smart_mask("xxx", "Edge Wear")
+    sp_end_batch()
+    """
+    if not name:
+        raise ValueError("name must not be empty")
+    return sp.call("begin_batch", {"name": name})
+
+
+@mcp.tool()
+def sp_end_batch() -> dict:
+    """
+    结束批量操作，合并为单条 undo。
+    """
+    return sp.call("end_batch")
+
+
+# ── Phase 9 — JS API 集成（Baking + 通道管理）───────────────────────────────
+
+@mcp.tool()
+def sp_bake_mesh_maps(texture_set_name: str) -> dict:
+    """
+    烘焙指定纹理集的 mesh maps（AO/Curvature/Normal 等）。
+    需要 SP 10.0+。通过 `js.evaluate("alg.baking.bake()")` 实现。
+
+    texture_set_name: 纹理集名称（从 sp_get_texture_sets 获取）
+    """
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    return sp.call("bake_mesh_maps", {"texture_set_name": texture_set_name})
+
+
+@mcp.tool()
+def sp_add_texture_set_channel(texture_set_name: str, channel_id: str,
+                                channel_format: str = "Color4",
+                                channel_label: str = "") -> dict:
+    """
+    给纹理集添加通道。
+    通过 `js.evaluate("alg.texturesets.addChannel()")` 实现。
+
+    texture_set_name: 纹理集名称
+    channel_id: 通道标识符（如 "custom_channel_0"）
+    channel_format: 通道格式（"Color4" / "Grayscale"，默认 "Color4"）
+    channel_label: 通道显示名称（默认同 channel_id）
+    """
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    if not channel_id:
+        raise ValueError("channel_id must not be empty")
+    return sp.call("add_texture_set_channel", {
+        "texture_set_name": texture_set_name,
+        "channel_id": channel_id,
+        "channel_format": channel_format,
+        "channel_label": channel_label,
+    })
+
+
+@mcp.tool()
+def sp_remove_texture_set_channel(texture_set_name: str, channel_id: str) -> dict:
+    """
+    删除纹理集通道。
+    通过 `js.evaluate("alg.texturesets.removeChannel()")` 实现。
+
+    texture_set_name: 纹理集名称
+    channel_id: 通道标识符
+    """
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    if not channel_id:
+        raise ValueError("channel_id must not be empty")
+    return sp.call("remove_texture_set_channel", {
+        "texture_set_name": texture_set_name,
+        "channel_id": channel_id,
+    })
 
 
 # ── 入口 ──────────────────────────────────────────────────────────────────────

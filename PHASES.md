@@ -38,8 +38,10 @@
 | Phase 3 | 视觉反馈（截图） | ✅ 完成 |
 | Phase 4 | Smart Material 创作工具 | ✅ 完成（含 Iray） |
 | Phase 5 | Skills + Commands 补全 | ✅ 完成 |
-| Phase 6 | 图层基础 + 通道 + Undo | 🔲 待开始 |
-| Phase 7 | 图层高级 + TextureSet + 项目 + 相机 | 🔲 待开始 |
+| Phase 6 | 图层基础 + 通道 + Undo | ✅ 完成 |
+| Phase 7 | 图层高级 + TextureSet + 项目 + 相机 | ✅ 完成 |
+| Phase 8 | 批量 Undo（ScopedModification） | ✅ 完成 |
+| Phase 9 | JS API 集成（Baking + 通道管理） | ✅ 完成 |
 
 ---
 
@@ -514,6 +516,148 @@ import substance_painter.environment; print(dir(substance_painter.environment))
 - `AGENTS.md` 更新 tool 列表为 34 个
 - 所有新 tool 写入 `mcp.json`
 - 相关 SKILL.md 更新
+
+---
+
+## Phase 8 — 批量 Undo（ScopedModification）
+
+**状态：** 🔲 待开始
+
+**目标：** 将 LLM 发起的多个 layer 操作合并为单条 undo，用户在 SP 里按一次 Ctrl+Z 即可撤销整批操作。
+
+**已验证：**
+- `ls.ScopedModification("name")` 支持手动 `__enter__()` / `__exit__()`
+- 批量内操作合并为 1 条 undo 条目（实测 Ctrl+Z 一次撤销 2 个 insert_fill）
+- 跨 HTTP 调用保持 batch 打开状态可行（`_batch_scope` 全局变量）
+
+**任务 8.1 — 实现 handler：**
+
+```python
+# handlers.py
+_batch_scope = None
+
+def begin_batch(name: str) -> dict:
+    global _batch_scope
+    if _batch_scope is not None:
+        raise RuntimeError("A batch is already active. Call end_batch() first.")
+    import substance_painter.layerstack as ls
+    _batch_scope = ls.ScopedModification(name)
+    _batch_scope.__enter__()
+    return {"ok": True, "batch_name": name}
+
+def end_batch() -> dict:
+    global _batch_scope
+    if _batch_scope is None:
+        raise RuntimeError("No active batch. Call begin_batch() first.")
+    _batch_scope.__exit__(None, None, None)
+    _batch_scope = None
+    return {"ok": True}
+```
+
+**任务 8.2 — MCP tool 定义：**
+
+```python
+# sp_mcp.py
+@mcp.tool()
+def sp_begin_batch(name: str) -> dict:
+    """开始批量操作。后续 layer 操作将合并为单条 undo。"""
+
+@mcp.tool()
+def sp_end_batch() -> dict:
+    """结束批量操作，合并为单条 undo。"""
+```
+
+**任务 8.3 — mock + 测试：**
+
+- conftest.py：mock `ScopedModification`（`__enter__` / `__exit__` 有状态记录）
+- test_handlers_mock.py：测试 begin → 操作 → end 流程、未 begin 就 end 报错、重复 begin 报错
+- test_server_tools.py：server tool 参数校验
+
+**任务 8.4 — Live 验证：**
+
+1. `sp_begin_batch("Test Batch")`
+2. `sp_add_fill_layer("A")` + `sp_add_fill_layer("B")`
+3. `sp_end_batch()`
+4. 在 SP 按 Ctrl+Z → 两个图层一起消失
+
+**验收标准：**
+- 146+ 测试全绿
+- Live 验证 Ctrl+Z 撤销批量操作
+- PHASES.md 更新 Phase 8 状态为 ✅
+
+---
+
+## Phase 9 — JS API 集成（Baking + 通道管理）
+
+**状态：** 🔲 待开始
+
+**目标：** 通过 `sp.js.evaluate()` 调用 SP 的 `alg` JS API，补上 Python API 缺失的功能。
+
+**已验证可用的 JS API：**
+
+| JS API | 功能 | 测试结果 |
+|--------|------|---------|
+| `alg.baking.bake(textureSetName)` | 烘焙 mesh maps | ✅ 返回 `{}`（成功） |
+| `alg.texturesets.getActiveTextureSet()` | 获取活动纹理集 | ✅ 返回 `["name"]` |
+| `alg.texturesets.addChannel(...)` | 添加通道 | ✅ 函数存在 |
+| `alg.texturesets.editChannel(...)` | 编辑通道 | ✅ 函数存在 |
+| `alg.texturesets.removeChannel(...)` | 删除通道 | ✅ 函数存在 |
+| `alg.texturesets.setResolution(...)` | 设置分辨率 | ✅ 函数存在 |
+| `alg.mapexport.save(path)` | 导出贴图 | ✅ 需要路径参数 |
+| `alg.project.isOpen()` / `name()` | 项目信息 | ✅ 正常 |
+| `alg.ui.clickButton(name)` | 点击 UI 按钮 | ⚠️ 有 findChild 错误 |
+
+**任务 9.1 — 烘焙 Mesh Maps：**
+
+```python
+# handlers.py
+def bake_mesh_maps(texture_set_name: str) -> dict:
+    """通过 JS API 烘焙指定纹理集的 mesh maps。"""
+    import substance_painter.js as js
+    js.evaluate(f'alg.baking.bake("{texture_set_name}")')
+    return {"ok": True, "texture_set": texture_set_name}
+```
+
+**任务 9.2 — Texture Set 通道管理：**
+
+```python
+# handlers.py
+def add_texture_set_channel(texture_set_name: str, channel_id: str, 
+                             channel_format: str = "Color4",
+                             channel_label: str = "") -> dict:
+    """通过 JS API 给纹理集添加通道。"""
+    import substance_painter.js as js
+    label = channel_label or channel_id
+    js.evaluate(f'alg.texturesets.addChannel("{texture_set_name}", '
+                f'"{channel_id}", "{channel_format}", "{label}")')
+    return {"ok": True}
+
+def remove_texture_set_channel(texture_set_name: str, channel_id: str) -> dict:
+    """通过 JS API 删除纹理集通道。"""
+    import substance_painter.js as js
+    js.evaluate(f'alg.texturesets.removeChannel("{texture_set_name}", "{channel_id}")')
+    return {"ok": True}
+```
+
+**任务 9.3 — Undo/Redo 探索（可选）：**
+
+`alg.ui.clickButton("Undo")` 存在但报 `findChild` 错误。需要进一步探索：
+- 可能需要先初始化 JS 上下文
+- 可能需要传入不同的按钮标识符
+- 如果无法解决，保持 `NotImplementedError`
+
+**任务 9.4 — mock + 测试：**
+
+- conftest.py：mock `substance_painter.js` 模块（`evaluate` 函数）
+- test_handlers_mock.py：测试 bake / add_channel / remove_channel
+- test_server_tools.py：server tool 参数校验
+
+**验收标准：**
+- 166+ 测试全绿
+- `sp_bake_mesh_maps` live 验证（烘焙一次确认）
+- `sp_add_texture_set_channel` / `sp_remove_texture_set_channel` live 验证
+- PHASES.md 更新 Phase 9 状态为 ✅
+- AGENTS.md 更新 tool 列表
 
 ---
 

@@ -254,6 +254,19 @@ def _make_sp_mock():
     layerstack.delete_node = delete_node
     layerstack.move_node = move_node
 
+    class MockScopedModification:
+        """Mock ScopedModification — 记录 enter/exit 状态。"""
+        def __init__(self, name=""):
+            self.name = name
+            self._active = False
+        def __enter__(self):
+            self._active = True
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self._active = False
+            return False
+    layerstack.ScopedModification = MockScopedModification
+
     class MaskBackground:
         Black = "Black"
         White = "White"
@@ -362,6 +375,27 @@ def _make_sp_mock():
     display_mod.set_environment_resource = _set_environment_resource
     display_mod.get_environment_resource = _get_environment_resource
 
+    # ── substance_painter.js ──
+    js_mod = types.ModuleType("substance_painter.js")
+
+    def _js_evaluate(code):
+        """Mock JS evaluate — 简单模拟 alg API 调用。"""
+        if "alg.baking.bake" in code:
+            return '{"ok": true}'
+        elif "alg.texturesets.addChannel" in code:
+            return '{"ok": true}'
+        elif "alg.texturesets.removeChannel" in code:
+            return '{"ok": true}'
+        elif "alg.texturesets.getActiveTextureSet" in code:
+            return '["Default"]'
+        elif "alg.project.isOpen" in code:
+            return "true"
+        elif "alg.project.name" in code:
+            return '"MockProject"'
+        return '"ok"'
+
+    js_mod.evaluate = _js_evaluate
+
     # ── substance_painter.undo (legacy, not used by new handlers) ──
     undo_mod = types.ModuleType("substance_painter.undo")
     undo_mod.undo = lambda: None
@@ -394,6 +428,7 @@ def _make_sp_mock():
     class ResourceType:
         SMART_MATERIAL = "smartmaterial"
         SMART_MASK = "smartmask"
+        SUBSTANCE = "substance"
     resource.Type = ResourceType
 
     class MockResourceID:
@@ -418,13 +453,33 @@ def _make_sp_mock():
 
     def resource_search(query):
         all_resources = [
+            # Smart Materials (representative subset of real SP 10.0.1)
             MockResource("Steel", "smartmaterial"),
             MockResource("Copper", "smartmaterial"),
             MockResource("Gold Armor", "smartmaterial"),
-            MockResource("Edge Wear", "smartmask"),
+            MockResource("Aluminium Anodized Red", "smartmaterial"),
+            MockResource("Bronze Corroded", "smartmaterial"),
+            MockResource("Leather Rough", "smartmaterial"),
+            MockResource("Plastic Matte", "smartmaterial"),
+            MockResource("Wood Walnut", "smartmaterial"),
+            # Smart Masks (representative subset of real SP 10.0.1)
             MockResource("Dirt", "smartmask"),
-            MockResource("Grunge Scratches", "smartmask"),
+            MockResource("Dust", "smartmask"),
             MockResource("Rust", "smartmask"),
+            MockResource("Edge Damage", "smartmask"),
+            MockResource("Edges Scratched", "smartmask"),
+            MockResource("Surface Worn", "smartmask"),
+            MockResource("Paint Damaged", "smartmask"),
+            MockResource("Moisture", "smartmask"),
+            # Regular Materials (SUBSTANCE type, representative subset)
+            MockResource("Carbon Fiber", "substance"),
+            MockResource("Concrete Raw", "substance"),
+            MockResource("Fabric Felt", "substance"),
+            MockResource("Leather Grain", "substance"),
+            MockResource("Metal Rust", "substance"),
+            MockResource("Plastic Glossy", "substance"),
+            MockResource("Wood Bark", "substance"),
+            # Environments
             MockResource("Studio", "environment"),
             MockResource("Sunrise", "environment"),
             MockResource("Night", "environment"),
@@ -642,6 +697,7 @@ def _make_sp_mock():
     sp.undo          = undo_mod
     sp.project       = project_mod
     sp.display       = display_mod
+    sp.js            = js_mod
     sp.export        = export
     sp.resource      = resource
 
@@ -655,6 +711,7 @@ def _make_sp_mock():
     sys.modules["substance_painter.undo"]        = undo_mod
     sys.modules["substance_painter.project"]     = project_mod
     sys.modules["substance_painter.display"]     = display_mod
+    sys.modules["substance_painter.js"]          = js_mod
     sys.modules["substance_painter.export"]      = export
     sys.modules["substance_painter.resource"]    = resource
 

@@ -11,9 +11,10 @@ Substance Painter 贴图导出 + SP2VTF 格式转换。
 ## 导出工作流
 
 ```
-1. sp_capture_viewport(mode="render")    最终确认（可选）
-2. sp_export_textures(preset, output_dir) 导出贴图
-3. 调用 SP2VTF 转换为 Source 引擎格式（可选）
+1. sp_save_project()                    保存当前项目
+2. sp_capture_viewport(mode="render")   最终确认（可选）
+3. sp_export_textures(preset, output_dir) 导出贴图
+4. 调用 SP2VTF 转换为 Source 引擎格式（可选）
 ```
 
 ## sp_export_textures

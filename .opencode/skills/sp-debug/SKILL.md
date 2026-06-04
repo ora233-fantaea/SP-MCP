@@ -49,6 +49,24 @@ description: 排查 SP MCP bridge 连接问题、plugin 加载失败、tool 调�
 
 **解决：** 确认 handlers.py 已更新为 `substance_painter.layerstack`
 
+### "vectorial is not a valid Type"
+
+**症状：** `list_shelf_materials("")` 遇到未知资源类型
+
+**解决：** handler 已加 try/except 容错，遇到未知类型自动跳过
+
+### "This node already has a mask"
+
+**症状：** 对已有遮罩的图层再次调用 `add_smart_mask`
+
+**解决：** 先用 `delete_layer` 删掉旧遮罩，或换一个图层
+
+### "NotImplementedError: move_layer / group_layers / ungroup_layer"
+
+**症状：** 调用需要 SP 10.x 无 Python API 的操作
+
+**解决：** 这些操作只能在 Painter UI 中完成（拖拽 / Ctrl+G / Ctrl+Shift+G）
+
 ### Smart API 不可用
 
 **症状：** `"requires SP 10.0+"`

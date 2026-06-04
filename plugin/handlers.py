@@ -203,9 +203,47 @@ def list_shelf_materials(filter: str = "") -> list:
     results = r.search(filter) if filter else r.search("")
     materials = []
     for res in results:
-        if res.type() == r.Type.SMART_MATERIAL:
-            materials.append(res.gui_name())
+        try:
+            if res.type() == r.Type.SMART_MATERIAL:
+                materials.append(res.gui_name())
+        except (ValueError, AttributeError):
+            continue
     return sorted(set(materials))
+
+
+def list_materials(filter: str = "") -> list:
+    """列出所有普通材质（SUBSTANCE 类型），支持关键词过滤。"""
+    import substance_painter.resource as r
+
+    results = r.search(filter) if filter else r.search("")
+    materials = []
+    for res in results:
+        try:
+            if res.type() == r.Type.SUBSTANCE:
+                materials.append(res.gui_name())
+        except (ValueError, AttributeError):
+            continue
+    return sorted(set(materials))
+
+
+def apply_material(layer_id: str, material_name: str) -> dict:
+    """将普通材质（SUBSTANCE 类型）应用到指定图层的所有通道。"""
+    import substance_painter.resource as r
+    import substance_painter.layerstack as ls
+
+    node = _find_layer(layer_id)
+    resource = _find_resource(material_name, r.Type.SUBSTANCE)
+    if resource is None:
+        raise ValueError(f"Material not found: {material_name!r}")
+
+    rid = resource.identifier()
+    for ch in (ls.ChannelType.BaseColor, ls.ChannelType.Roughness,
+               ls.ChannelType.Metallic, ls.ChannelType.Height, ls.ChannelType.Normal):
+        try:
+            node.set_source(ch, rid)
+        except Exception:
+            pass
+    return {"ok": True, "material": material_name, "layer_id": str(node.uid())}
 
 
 def capture_viewport(mode: str = "quick") -> dict:
@@ -275,40 +313,18 @@ def add_paint_layer(name: str) -> dict:
     return {"id": str(node.uid()), "name": node.get_name()}
 
 
-def _find_qaction(shortcut: str):
-    """按快捷键查找 QAction。"""
-    import substance_painter.ui
-    from PySide2.QtWidgets import QAction
-    win = substance_painter.ui.get_main_window()
-    for action in win.findChildren(QAction):
-        try:
-            if action.shortcut().toString() == shortcut and action.isEnabled():
-                return action
-        except RuntimeError:
-            continue
-    return None
-
-
 def undo() -> dict:
-    action = _find_qaction("Ctrl+Z")
-    if action is None:
-        raise RuntimeError("Undo action not found (Ctrl+Z)")
-    try:
-        action.trigger()
-    except RuntimeError:
-        pass
-    return {"ok": True}
+    raise NotImplementedError(
+        "undo is not available through the SP 10.x Python API. "
+        "Use Ctrl+Z directly in the Painter UI."
+    )
 
 
 def redo() -> dict:
-    action = _find_qaction("Ctrl+Y")
-    if action is None:
-        raise RuntimeError("Redo action not found (Ctrl+Y)")
-    try:
-        action.trigger()
-    except RuntimeError:
-        pass
-    return {"ok": True}
+    raise NotImplementedError(
+        "redo is not available through the SP 10.x Python API. "
+        "Use Ctrl+Y directly in the Painter UI."
+    )
 
 
 _CHANNEL_MAP = {
@@ -383,14 +399,18 @@ def duplicate_layer(layer_id: str) -> dict:
 
     # GroupLayerNode 没有 get_source，只复制 fill layer 的通道属性
     if type(node).__name__ != "GroupLayerNode":
+        import substance_painter.colormanagement as cm
         for ch in (ls.ChannelType.BaseColor, ls.ChannelType.Roughness,
                    ls.ChannelType.Metallic, ls.ChannelType.Height, ls.ChannelType.Normal):
             new_node.set_opacity(node.get_opacity(ch), ch)
             new_node.set_blending_mode(node.get_blending_mode(ch), ch)
             try:
                 src = node.get_source(ch)
-                if src is not None:
-                    new_node.set_source(ch, src)
+                if src is not None and hasattr(src, "get_color"):
+                    # SourceUniformColor → get_color().value_raw → new cm.Color
+                    c = src.get_color()
+                    raw = c.value_raw
+                    new_node.set_source(ch, cm.Color(raw[0], raw[1], raw[2]))
             except (AttributeError, TypeError):
                 pass
 
@@ -484,6 +504,73 @@ def set_environment(preset: str) -> dict:
             display.set_environment_resource(res.identifier())
             return {"ok": True, "environment": res.gui_name()}
     raise ValueError(f"Environment preset not found: {preset!r}")
+
+
+# ── Phase 8: 批量 Undo ──────────────────────────────────────────────────────
+
+_batch_scope = None
+
+
+def begin_batch(name: str) -> dict:
+    """开始批量操作。后续 layer 操作将合并为单条 undo。"""
+    global _batch_scope
+    if not name:
+        raise ValueError("name must not be empty")
+    if _batch_scope is not None:
+        raise RuntimeError("A batch is already active. Call end_batch() first.")
+    import substance_painter.layerstack as ls
+    _batch_scope = ls.ScopedModification(name)
+    _batch_scope.__enter__()
+    return {"ok": True, "batch_name": name}
+
+
+def end_batch() -> dict:
+    """结束批量操作，合并为单条 undo。"""
+    global _batch_scope
+    if _batch_scope is None:
+        raise RuntimeError("No active batch. Call begin_batch() first.")
+    _batch_scope.__exit__(None, None, None)
+    _batch_scope = None
+    return {"ok": True}
+
+
+# ── Phase 9: JS API 集成 ────────────────────────────────────────────────────
+
+def bake_mesh_maps(texture_set_name: str) -> dict:
+    """通过 JS API 烘焙指定纹理集的 mesh maps。"""
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    import substance_painter.js as js
+    js.evaluate(f'alg.baking.bake("{texture_set_name}")')
+    return {"ok": True, "texture_set": texture_set_name}
+
+
+def add_texture_set_channel(texture_set_name: str, channel_id: str,
+                             channel_format: str = "RGB16F",
+                             channel_label: str = "") -> dict:
+    """通过 JS API 给纹理集添加通道。"""
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    if not channel_id:
+        raise ValueError("channel_id must not be empty")
+    label = channel_label or channel_id
+    import substance_painter.js as js
+    js.evaluate(
+        f'alg.texturesets.addChannel(["{texture_set_name}"], '
+        f'"{channel_id}", "{channel_format}", "{label}")'
+    )
+    return {"ok": True, "channel": channel_id}
+
+
+def remove_texture_set_channel(texture_set_name: str, channel_id: str) -> dict:
+    """通过 JS API 删除纹理集通道。"""
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    if not channel_id:
+        raise ValueError("channel_id must not be empty")
+    import substance_painter.js as js
+    js.evaluate(f'alg.texturesets.removeChannel(["{texture_set_name}"], "{channel_id}")')
+    return {"ok": True, "channel": channel_id}
 
 
 # ── 内部工具 ──────────────────────────────────────────────────────────────────
@@ -717,6 +804,8 @@ _REGISTRY: dict = {
     "apply_smart_material":     apply_smart_material,
     "add_smart_mask":           add_smart_mask,
     "list_shelf_materials":     list_shelf_materials,
+    "list_materials":           list_materials,
+    "apply_material":           apply_material,
     "set_iray_params":          set_iray_params,
     "start_iray_render":        start_iray_render,
     "check_iray_render":        check_iray_render,
@@ -743,4 +832,11 @@ _REGISTRY: dict = {
     "set_camera":               set_camera,
     "frame_mesh":               frame_mesh,
     "set_environment":          set_environment,
+    # Phase 8
+    "begin_batch":              begin_batch,
+    "end_batch":                end_batch,
+    # Phase 9
+    "bake_mesh_maps":           bake_mesh_maps,
+    "add_texture_set_channel":  add_texture_set_channel,
+    "remove_texture_set_channel": remove_texture_set_channel,
 }

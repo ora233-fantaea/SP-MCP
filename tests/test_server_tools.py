@@ -25,7 +25,8 @@ def mock_bridge(monkeypatch):
 
     def fake_call(method, params=None, **kwargs):
         params = params or {}
-        if method in ("frame_mesh", "move_layer", "group_layers", "ungroup_layer"):
+        if method in ("frame_mesh", "move_layer", "group_layers", "ungroup_layer",
+                       "undo", "redo"):
             raise NotImplementedError(f"{method} not available")
         responses = {
             "ping":                    {"status": "ok", "sp_version": "10.0.0", "smart_api": True},
@@ -43,6 +44,8 @@ def mock_bridge(monkeypatch):
             "apply_smart_material":    {"id": "100", "name": "Smart_Material"},
             "add_smart_mask":          {"ok": True, "effects_count": 1},
             "list_shelf_materials":    ["Steel", "Copper", "Gold Armor"],
+            "list_materials":          ["Carbon Fiber", "Concrete Raw", "Fabric Felt"],
+            "apply_material":          {"ok": True, "material": params.get("material_name", ""), "layer_id": params.get("layer_id", "")},
             "set_iray_params":         {"ok": True, "max_samples": params.get("max_samples", 100),
                                         "max_time": params.get("max_time", 60)},
             "start_iray_render":       {"ok": True, "message": "Iray render queued"},
@@ -71,6 +74,13 @@ def mock_bridge(monkeypatch):
             "save_project":            {"ok": True},
             "set_camera":              {"ok": True},
             "set_environment":         {"ok": True},
+            # Phase 8
+            "begin_batch":             {"ok": True, "batch_name": params.get("name", "")},
+            "end_batch":               {"ok": True},
+            # Phase 9
+            "bake_mesh_maps":          {"ok": True, "texture_set": params.get("texture_set_name", "")},
+            "add_texture_set_channel": {"ok": True, "channel": params.get("channel_id", "")},
+            "remove_texture_set_channel": {"ok": True, "channel": params.get("channel_id", "")},
         }
         if method not in responses:
             raise ValueError(f"Unknown method in mock: {method}")
@@ -186,6 +196,26 @@ class TestSmartMaterialTools:
         result = sp_add_smart_mask(layer_id="1", mask_name="Edge Wear")
         assert result["ok"] is True
 
+    def test_sp_list_materials(self, mock_bridge):
+        from server.sp_mcp import sp_list_materials
+        result = sp_list_materials(filter="Carbon")
+        assert isinstance(result, list)
+
+    def test_sp_apply_material(self, mock_bridge):
+        from server.sp_mcp import sp_apply_material
+        result = sp_apply_material(layer_id="1", material_name="Carbon Fiber")
+        assert result["ok"] is True
+
+    def test_sp_apply_material_requires_layer_id(self, mock_bridge):
+        from server.sp_mcp import sp_apply_material
+        with pytest.raises((ValueError, TypeError)):
+            sp_apply_material(layer_id="", material_name="Carbon Fiber")
+
+    def test_sp_apply_material_requires_name(self, mock_bridge):
+        from server.sp_mcp import sp_apply_material
+        with pytest.raises((ValueError, TypeError)):
+            sp_apply_material(layer_id="1", material_name="")
+
 
 # ---------------------------------------------------------------------------
 # Phase 6: Layer basics + channels + undo
@@ -221,13 +251,13 @@ class TestPhase6Tools:
 
     def test_sp_undo(self, mock_bridge):
         from server.sp_mcp import sp_undo
-        result = sp_undo()
-        assert result["ok"] is True
+        with pytest.raises((ValueError, NotImplementedError)):
+            sp_undo()
 
     def test_sp_redo(self, mock_bridge):
         from server.sp_mcp import sp_redo
-        result = sp_redo()
-        assert result["ok"] is True
+        with pytest.raises((ValueError, NotImplementedError)):
+            sp_redo()
 
     def test_sp_set_layer_channel(self, mock_bridge):
         from server.sp_mcp import sp_set_layer_channel
@@ -343,6 +373,78 @@ class TestPhase7Tools:
         from server.sp_mcp import sp_set_environment
         result = sp_set_environment(preset="Sunrise")
         assert result["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: Batch Undo
+# ---------------------------------------------------------------------------
+
+class TestPhase8Tools:
+    def test_sp_begin_batch(self, mock_bridge):
+        from server.sp_mcp import sp_begin_batch
+        result = sp_begin_batch(name="TestBatch")
+        assert result["ok"] is True
+
+    def test_sp_begin_batch_requires_name(self, mock_bridge):
+        from server.sp_mcp import sp_begin_batch
+        with pytest.raises((ValueError, TypeError)):
+            sp_begin_batch(name="")
+
+    def test_sp_end_batch(self, mock_bridge):
+        from server.sp_mcp import sp_end_batch
+        result = sp_end_batch()
+        assert result["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 9: JS API Integration
+# ---------------------------------------------------------------------------
+
+class TestPhase9Tools:
+    def test_sp_bake_mesh_maps(self, mock_bridge):
+        from server.sp_mcp import sp_bake_mesh_maps
+        result = sp_bake_mesh_maps(texture_set_name="Default")
+        assert result["ok"] is True
+
+    def test_sp_bake_mesh_maps_requires_name(self, mock_bridge):
+        from server.sp_mcp import sp_bake_mesh_maps
+        with pytest.raises((ValueError, TypeError)):
+            sp_bake_mesh_maps(texture_set_name="")
+
+    def test_sp_add_texture_set_channel(self, mock_bridge):
+        from server.sp_mcp import sp_add_texture_set_channel
+        result = sp_add_texture_set_channel(
+            texture_set_name="Default", channel_id="custom_ch",
+            channel_format="Color4", channel_label="Custom"
+        )
+        assert result["ok"] is True
+
+    def test_sp_add_texture_set_channel_requires_ts(self, mock_bridge):
+        from server.sp_mcp import sp_add_texture_set_channel
+        with pytest.raises((ValueError, TypeError)):
+            sp_add_texture_set_channel(texture_set_name="", channel_id="ch")
+
+    def test_sp_add_texture_set_channel_requires_ch(self, mock_bridge):
+        from server.sp_mcp import sp_add_texture_set_channel
+        with pytest.raises((ValueError, TypeError)):
+            sp_add_texture_set_channel(texture_set_name="Default", channel_id="")
+
+    def test_sp_remove_texture_set_channel(self, mock_bridge):
+        from server.sp_mcp import sp_remove_texture_set_channel
+        result = sp_remove_texture_set_channel(
+            texture_set_name="Default", channel_id="custom_ch"
+        )
+        assert result["ok"] is True
+
+    def test_sp_remove_texture_set_channel_requires_ts(self, mock_bridge):
+        from server.sp_mcp import sp_remove_texture_set_channel
+        with pytest.raises((ValueError, TypeError)):
+            sp_remove_texture_set_channel(texture_set_name="", channel_id="ch")
+
+    def test_sp_remove_texture_set_channel_requires_ch(self, mock_bridge):
+        from server.sp_mcp import sp_remove_texture_set_channel
+        with pytest.raises((ValueError, TypeError)):
+            sp_remove_texture_set_channel(texture_set_name="Default", channel_id="")
 
 
 # ---------------------------------------------------------------------------

@@ -1,13 +1,13 @@
 ---
 name: sp-layer-ops
 description: 调用 MCP tools 操作 Substance Painter 图层栈，包括新建图层、
-             修改材质属性、应用 Smart Material、添加 Smart Mask。
-             调色/材质参数调整、图层增删改类任务触发此 skill。
+             修改材质属性、应用 Smart Material/普通材质、添加 Smart Mask、
+             批量 Undo。调色/材质参数调整、图层增删改类任务触发此 skill。
 ---
 
 # SP Layer Operations
 
-操作 Substance Painter 图层栈的 MCP tools 参考。
+操作 Substance Painter 图层栈的 MCP tools 参考（38 tools）。
 
 ## API 速查表
 
@@ -16,107 +16,143 @@ description: 调用 MCP tools 操作 Substance Painter 图层栈，包括新建�
 | 原假设 | 实际 API |
 |---|---|
 | `substance_painter.layers` | `substance_painter.layerstack` |
-| `substance_painter.__version__` | `substance_painter.application.version()` → `"10.0.1"` |
 | `is_enabled()` / `set_enabled()` | `is_visible()` / `set_visible()` |
 | `get_child_layers()` | `node.sub_layers()` (GroupLayerNode) |
-| `get_root_layer_nodes()` 返回 int ID | 返回 `List[Node]` 节点对象 |
-| 节点类型 `node.get_type().name` | `type(node).__name__` → `"FillLayerNode"` / `"GroupLayerNode"` |
-| `get_opacity()` 无参数 | `get_opacity(ChannelType.BaseColor)` 需要 ChannelType |
-| Smart Material 用 `layers` 模块 | `resource.search()` + `ls.insert_smart_material()` |
-| Smart Mask 直接插入 | 需先 `node.add_mask(White)` 再 `insert_smart_mask()` |
+| 节点类型 `node.get_type().name` | `type(node).__name__` → `"FillLayerNode"` / `"GroupLayerNode"` / `"PaintLayerNode"` |
+| Scalar 通道用 `ls.Color` | 必须用 `colormanagement.Color(v,v,v)` |
+| `node.get_source()` 返回 Color | 返回 `SourceUniformColor`，需 `.get_color().value_raw` 取值 |
+| `move_node()` / `duplicate_node()` | SP 10.x 不存在，用 UI 操作 |
+| `substance_painter.undo` | 不存在，用 `ScopedModification` 批量合并 + 用户 Ctrl+Z |
+| `substance_painter.camera` | 不存在，相机 API 在 `substance_painter.display.Camera` |
+| `ScopedModification` 只能 `with` | 支持手动 `__enter__()` / `__exit__()` 跨 HTTP 调用 |
 
 ---
 
 ## Tool 参考
 
-### sp_ping
+### 连接
 
-检查 bridge 连通性。**任何操作前必须先调用。**
+**`sp_ping`** — 检查 bridge 连通性。任何操作前必须先调用。
 
-```
-返回: {"status": "ok", "sp_version": "10.0.1", "sdk_version": "0.3.0", "smart_api": true}
-```
+### 图层读取
 
-### sp_get_layer_stack
+**`sp_get_layer_stack`** — 返回完整图层树 JSON。GROUP 类型含 `children`（递归）。
 
-返回完整图层树 JSON。GROUP 类型含 `children` 列表（递归）。
+**`sp_get_texture_sets(filter="")`** — 返回所有纹理集及其图层结构，支持名称过滤。
 
-```
-返回: [
-  {"id": "528", "name": "Metal_Base", "type": "FillLayerNode", "enabled": true, "opacity": 1.0},
-  {"id": "258", "name": "Scratches", "type": "PaintLayerNode", "enabled": true, "opacity": 1.0}
-]
-```
+**`sp_get_layer_properties(layer_id)`** — 返回指定图层的详细属性。
 
-**注意：** layer id 在 Painter 重启后会变化，不要跨 session 缓存。
+**`sp_get_layer_channels(layer_id)`** — 返回所有通道的 opacity、blend_mode、source 值。
 
-### sp_get_layer_properties(layer_id)
+### 图层写入
 
-返回指定图层的详细属性。
+**`sp_add_fill_layer(name, channel, color_hex, opacity, blend_mode)`** — 在图层栈顶部新建 Fill Layer。
 
-```
-参数: layer_id (str) — 从 sp_get_layer_stack 获取
-返回: {"id", "name", "type", "enabled", "opacity", "blending_mode"}
-```
-
-### sp_add_fill_layer(name, channel, color_hex, opacity, blend_mode)
-
-在图层栈顶部新建 Fill Layer。
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| name | str | 必填 | 语义化命名（如 "Rust_Overlay"） |
-| channel | str | "BaseColor" | BaseColor / Roughness / Metallic / Height / Normal |
-| color_hex | str | "#FFFFFF" | 十六进制颜色（仅 BaseColor 有效） |
-| opacity | float | 1.0 | 0.0–1.0，建议从 0.3–0.5 开始 |
-| blend_mode | str | "Normal" | Normal / Multiply / Overlay / Screen |
-
-### sp_set_layer_property(layer_id, prop, value)
-
-修改图层属性。
-
-| prop | 值类型 | 说明 |
+| 参数 | 默认值 | 说明 |
 |------|--------|------|
-| opacity | float (0–1) | 透明度 |
-| enabled | bool | 可见性（is_visible/set_visible） |
-| name | str | 图层名称 |
-| blend_mode | str | 混合模式 |
+| name | 必填 | 语义化命名 |
+| channel | "BaseColor" | BaseColor / Roughness / Metallic / Height / Normal |
+| color_hex | "#FFFFFF" | 十六进制颜色 |
+| opacity | 1.0 | 0.0–1.0，建议从 0.3–0.5 开始 |
+| blend_mode | "Normal" | Normal / Multiply / Overlay / Screen |
 
-### sp_apply_smart_material(layer_id, material_name)
+**`sp_add_group_layer(name)`** — 新建空分组图层。
 
-对指定图层应用 Shelf 中的 Smart Material。需要 SP 10.0+。
+**`sp_add_paint_layer(name)`** — 新建绘画图层（PaintLayerNode）。
+
+**`sp_set_layer_property(layer_id, prop, value)`** — 修改图层属性。prop: opacity / enabled / name / blend_mode。
+
+**`sp_set_layer_channel(layer_id, channel, value)`** — 为指定通道设定数值。
+- channel: `"Roughness"` / `"Metallic"` / `"Height"` / `"BaseColor"` / `"Normal"`
+- 非 BaseColor 通道 value 为 float (0.0–1.0)
+- BaseColor 为 hex color (`"#FF0000"`)
+
+**`sp_delete_layer(layer_id)`** — 删除指定图层。
+
+**`sp_duplicate_layer(layer_id)`** — 复制图层，新图层在原图层上方。
+
+**`sp_move_layer(layer_id, target_id, position)`** — ⚠️ SP 10.x 无 API，NotImplementedError。用 UI 拖拽。
+
+**`sp_group_layers(layer_ids)`** — ⚠️ SP 10.x 无 API，NotImplementedError。用 Ctrl+G。
+
+**`sp_ungroup_layer(layer_id)`** — ⚠️ SP 10.x 无 API，NotImplementedError。用 Ctrl+Shift+G。
+
+### Smart Material（需要 SP 10.0+）
+
+**`sp_list_shelf_materials(filter="")`** — 列出可用 Smart Material，支持关键词过滤。
+
+**`sp_apply_smart_material(layer_id, material_name)`** — 对指定图层应用 Shelf 中的 Smart Material。
+
+**`sp_add_smart_mask(layer_id, mask_name)`** — 为图层添加程序化遮罩。
+常用 mask_name：`"Dirt"` / `"Rust"` / `"Edge Damage"` / `"Dust"` / `"Edges Scratched"`
+
+### 普通材质（需要 SP 10.0+）
+
+**`sp_list_materials(filter="")`** — 列出可用普通材质（SUBSTANCE 类型），支持关键词过滤。SP 中有 917+ 个。
+
+**`sp_apply_material(layer_id, material_name)`** — 将普通材质应用到指定图层的所有通道。
+调用前先用 `sp_list_materials` 确认名称。
+
+### 批量 Undo
+
+**`sp_begin_batch(name)`** — 开始批量操作，后续 layer 操作合并为单条 undo。
+
+**`sp_end_batch()`** — 结束批量操作，合并为单条 undo。
 
 ```
-参数:
-  layer_id      目标图层 id
-  material_name Smart Material 名称（先用 sp_list_shelf_materials 确认）
-返回: {"id": "...", "name": "..."}
+sp_begin_batch("Apply Rust Effect")
+  sp_add_fill_layer("Rust_Base")
+  sp_set_layer_channel("xxx", "Roughness", 0.8)
+  sp_add_smart_mask("xxx", "Rust")
+sp_end_batch()
+→ 用户按 Ctrl+Z 一次撤销全部操作
 ```
 
-### sp_add_smart_mask(layer_id, mask_name)
+### Texture Set
 
-为图层添加程序化遮罩。需要 SP 10.0+。
+**`sp_set_active_texture_set(name)`** — 切换当前操作的纹理集。
 
-常用 mask_name：
-- `"Edge Wear"` — 边缘磨损
-- `"Dirt"` — 污垢
-- `"Grunge Scratches"` — 划痕
-- `"Rust"` — 锈迹
+**`sp_set_texture_set_resolution(width, height)`** — 修改当前纹理集分辨率。
 
-### sp_list_shelf_materials(filter)
+### 项目
 
-列出可用 Smart Material，支持关键词过滤。
+**`sp_get_project_info()`** — 读取项目名、路径、is_open、is_busy。
 
-```
-参数: filter (str) — 关键词，如 "metal"，空字符串返回全部
-返回: ["Steel", "Copper", "Gold Armor", ...]
-```
+**`sp_save_project()`** — 保存当前项目。
+
+### 视觉反馈
+
+**`sp_capture_viewport(mode="quick")`** — 截取 viewport。mode: `"quick"` (迭代) / `"render"` (Iray)。
+
+**`sp_set_camera(x,y,z, target_x,target_y,target_z, fov)`** — 设置相机位置和视角。
+
+**`sp_set_environment(preset)`** — 切换 HDRI 环境光预设。
+
+### Iray 渲染
+
+**`sp_set_iray_params(max_samples, max_time, width, height)`** — 设置 Iray 参数。
+
+**`sp_start_iray_render()`** — 异步启动 Iray 渲染。
+
+**`sp_check_iray_render()`** — 检查渲染状态。
+
+### 导出
+
+**`sp_export_textures(preset, output_dir)`** — 触发贴图导出。
+
+### Escape hatch
+
+**`sp_run_python(code)`** — 在主线程执行任意 Python。仅作备用。
+
+---
 
 ## 常见错误
 
 | 错误 | 原因 | 解决 |
 |------|------|------|
-| `"Layer not found"` | layer_id 无效或已删除 | 重新调用 `sp_get_layer_stack` |
+| `"Layer not found"` | layer_id 无效或已删除 | 重新调 `sp_get_layer_stack` |
 | `"Smart Material not found"` | 名称拼写错误 | 先调 `sp_list_shelf_materials` 确认 |
-| `"opacity must be in [0.0, 1.0]"` | opacity 超范围 | 检查参数值 |
-| `"Unknown blend mode"` | 混合模式不存在 | 可选值: Normal/Multiply/Overlay/Screen |
+| `"Material not found"` | 名称拼写错误 | 先调 `sp_list_materials` 确认 |
+| `"Unknown channel"` | 通道名错误 | 可选: Roughness/Metallic/Height/BaseColor/Normal |
+| `"This node already has a mask"` | 图层已有遮罩 | 先删除现有遮罩或换图层 |
+| `"NotImplementedError"` | 该操作 SP 10.x 无 Python API | 用 UI 操作 |
