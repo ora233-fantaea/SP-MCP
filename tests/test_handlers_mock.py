@@ -470,15 +470,55 @@ class TestAddPaintLayer:
 # ── Phase 6: undo / redo ─────────────────────────────────────────────────────
 
 class TestUndo:
-    def test_raises_not_implemented(self, fresh_layer_stack):
-        with pytest.raises(NotImplementedError):
-            handlers.undo()
+    def test_nothing_to_undo(self, fresh_layer_stack):
+        import plugin.handlers as h
+        h._undo_stack.clear()
+        h._redo_stack.clear()
+        result = h.undo()
+        assert result["ok"] is False
+        assert "Nothing to undo" in result["error"]
+
+    def test_undo_add_fill_layer(self, fresh_layer_stack):
+        import plugin.handlers as h
+        h._undo_stack.clear()
+        h._redo_stack.clear()
+        h.add_fill_layer("UndoTest")
+        count_before = len(h.get_layer_stack())
+        result = h.undo()
+        assert result["ok"] is True
+        count_after = len(h.get_layer_stack())
+        assert count_after == count_before - 1
+
+    def test_undo_set_property(self, fresh_layer_stack):
+        import plugin.handlers as h
+        h._undo_stack.clear()
+        h._redo_stack.clear()
+        layer_id = h.get_layer_stack()[0]["id"]
+        h.set_layer_property(layer_id, "opacity", 0.3)
+        result = h.undo()
+        assert result["ok"] is True
 
 
 class TestRedo:
-    def test_raises_not_implemented(self, fresh_layer_stack):
-        with pytest.raises(NotImplementedError):
-            handlers.redo()
+    def test_nothing_to_redo(self, fresh_layer_stack):
+        import plugin.handlers as h
+        h._undo_stack.clear()
+        h._redo_stack.clear()
+        result = h.redo()
+        assert result["ok"] is False
+        assert "Nothing to redo" in result["error"]
+
+    def test_redo_after_undo(self, fresh_layer_stack):
+        import plugin.handlers as h
+        h._undo_stack.clear()
+        h._redo_stack.clear()
+        h.add_fill_layer("RedoTest")
+        count_before = len(h.get_layer_stack())
+        h.undo()
+        count_after_undo = len(h.get_layer_stack())
+        assert count_after_undo == count_before - 1
+        result = h.redo()
+        assert result["ok"] is True
 
 
 # ── Phase 6: set_layer_channel ───────────────────────────────────────────────

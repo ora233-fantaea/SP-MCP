@@ -25,8 +25,7 @@ def mock_bridge(monkeypatch):
 
     def fake_call(method, params=None, **kwargs):
         params = params or {}
-        if method in ("frame_mesh", "move_layer", "group_layers", "ungroup_layer",
-                       "undo", "redo"):
+        if method in ("frame_mesh", "move_layer", "group_layers", "ungroup_layer"):
             raise NotImplementedError(f"{method} not available")
         responses = {
             "ping":                    {"status": "ok", "sp_version": "10.0.0", "smart_api": True},
@@ -77,6 +76,8 @@ def mock_bridge(monkeypatch):
             # Phase 8
             "begin_batch":             {"ok": True, "batch_name": params.get("name", "")},
             "end_batch":               {"ok": True},
+            "undo":                    {"ok": True, "remaining": 0},
+            "redo":                    {"ok": True, "remaining": 0},
             # Phase 9
             "bake_mesh_maps":          {"ok": True, "texture_set": params.get("texture_set_name", "")},
             "add_texture_set_channel": {"ok": True, "channel": params.get("channel_id", "")},
@@ -251,13 +252,15 @@ class TestPhase6Tools:
 
     def test_sp_undo(self, mock_bridge):
         from server.sp_mcp import sp_undo
-        with pytest.raises((ValueError, NotImplementedError)):
-            sp_undo()
+        result = sp_undo()
+        # 外置栈为空时返回 ok=False
+        assert "ok" in result
 
     def test_sp_redo(self, mock_bridge):
         from server.sp_mcp import sp_redo
-        with pytest.raises((ValueError, NotImplementedError)):
-            sp_redo()
+        result = sp_redo()
+        # 外置栈为空时返回 ok=False
+        assert "ok" in result
 
     def test_sp_set_layer_channel(self, mock_bridge):
         from server.sp_mcp import sp_set_layer_channel

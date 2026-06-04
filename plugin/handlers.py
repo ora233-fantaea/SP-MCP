@@ -17,6 +17,80 @@ import io
 import base64
 
 
+# ── 外置 Undo/Redo 栈 ────────────────────────────────────────────────────────
+
+_undo_stack = []  # [(undo_fn, redo_fn), ...]
+_redo_stack = []  # [(undo_fn, redo_fn), ...]
+
+
+def _push_undo(undo_fn, redo_fn):
+    """记录一条 undo 操作，清空 redo 栈。"""
+    _undo_stack.append((undo_fn, redo_fn))
+    _redo_stack.clear()
+
+
+def _save_layer_state(layer_id: str) -> dict:
+    """保存图层的完整状态，用于 delete_layer 的 undo。"""
+    import substance_painter.layerstack as ls
+
+    node = _find_layer(layer_id)
+    state = {
+        "id": str(node.uid()),
+        "name": node.get_name(),
+        "type": type(node).__name__,
+        "visible": node.is_visible(),
+        "opacity": {},
+        "blending": {},
+        "sources": {},
+    }
+
+    for ch_name in ("BaseColor", "Roughness", "Metallic", "Height", "Normal"):
+        ch = getattr(ls.ChannelType, ch_name)
+        state["opacity"][ch_name] = node.get_opacity(ch)
+        state["blending"][ch_name] = node.get_blending_mode(ch).name
+        try:
+            src = node.get_source(ch)
+            if src is not None and hasattr(src, "get_color"):
+                c = src.get_color()
+                state["sources"][ch_name] = c.value_raw
+        except Exception:
+            pass
+
+    return state
+
+
+def _restore_layer(state: dict) -> str:
+    """从保存的状态恢复图层，返回新图层 id。"""
+    import substance_painter.layerstack as ls
+    import substance_painter.colormanagement as cm
+    import substance_painter.textureset as ts
+
+    stack = ts.get_active_stack()
+    pos = ls.InsertPosition.from_textureset_stack(stack)
+
+    if state["type"] == "GroupLayerNode":
+        node = ls.insert_group(pos)
+    else:
+        node = ls.insert_fill(pos)
+
+    node.set_name(state["name"])
+    node.set_visible(state["visible"])
+
+    for ch_name in ("BaseColor", "Roughness", "Metallic", "Height", "Normal"):
+        ch = getattr(ls.ChannelType, ch_name)
+        if ch_name in state["opacity"]:
+            node.set_opacity(state["opacity"][ch_name], ch)
+        if ch_name in state["blending"]:
+            blend = getattr(ls.BlendingMode, state["blending"][ch_name], None)
+            if blend:
+                node.set_blending_mode(blend, ch)
+        if ch_name in state["sources"]:
+            raw = state["sources"][ch_name]
+            node.set_source(ch, cm.Color(raw[0], raw[1], raw[2]))
+
+    return str(node.uid())
+
+
 def _sp():
     import substance_painter
     return substance_painter
@@ -138,7 +212,15 @@ def add_fill_layer(
         color = ls.Color(r, g, b)
         layer.set_source(ch, color)
 
-    return {"id": str(layer.uid()), "name": layer.get_name()}
+    new_id = str(layer.uid())
+
+    # 记录 undo
+    _push_undo(
+        undo_fn=lambda: delete_layer(new_id),
+        redo_fn=lambda: add_fill_layer(name, channel, color_hex, opacity, blend_mode),
+    )
+
+    return {"id": new_id, "name": layer.get_name()}
 
 
 def set_layer_property(layer_id: str, prop: str, value) -> dict:
@@ -151,17 +233,28 @@ def set_layer_property(layer_id: str, prop: str, value) -> dict:
     node = _find_layer(layer_id)
     import substance_painter.layerstack as ls
 
+    # 读取旧值
     if prop == "opacity":
+        old_value = node.get_opacity(ls.ChannelType.BaseColor)
         node.set_opacity(float(value), ls.ChannelType.BaseColor)
     elif prop == "enabled":
+        old_value = node.is_visible()
         node.set_visible(bool(value))
     elif prop == "name":
+        old_value = node.get_name()
         node.set_name(str(value))
     elif prop == "blend_mode":
+        old_value = node.get_blending_mode(ls.ChannelType.BaseColor).name
         blend = getattr(ls.BlendingMode, str(value), None)
         if blend is None:
             raise ValueError(f"Unknown blend mode: {value!r}")
         node.set_blending_mode(blend)
+
+    # 记录 undo
+    _push_undo(
+        undo_fn=lambda: set_layer_property(layer_id, prop, old_value),
+        redo_fn=lambda: set_layer_property(layer_id, prop, value),
+    )
 
     return {"ok": True}
 
@@ -281,9 +374,19 @@ def run_python(code: str) -> dict:
 # ── Phase 6: 图层基础 + 通道 + Undo ─────────────────────────────────────────
 
 def delete_layer(layer_id: str) -> dict:
+    # 保存完整状态用于 undo
+    saved_state = _save_layer_state(layer_id)
+
     node = _find_layer(layer_id)
     import substance_painter.layerstack as ls
     ls.delete_node(node)
+
+    # 记录 undo
+    _push_undo(
+        undo_fn=lambda: _restore_layer(saved_state),
+        redo_fn=lambda: delete_layer(layer_id),
+    )
+
     return {"ok": True}
 
 
@@ -314,17 +417,23 @@ def add_paint_layer(name: str) -> dict:
 
 
 def undo() -> dict:
-    raise NotImplementedError(
-        "undo is not available through the SP 10.x Python API. "
-        "Use Ctrl+Z directly in the Painter UI."
-    )
+    """撤销上一步操作（外置 undo 栈）。"""
+    if not _undo_stack:
+        return {"ok": False, "error": "Nothing to undo"}
+    undo_fn, redo_fn = _undo_stack.pop()
+    undo_fn()
+    _redo_stack.append((undo_fn, redo_fn))
+    return {"ok": True, "remaining": len(_undo_stack)}
 
 
 def redo() -> dict:
-    raise NotImplementedError(
-        "redo is not available through the SP 10.x Python API. "
-        "Use Ctrl+Y directly in the Painter UI."
-    )
+    """重做上一步操作（外置 redo 栈）。"""
+    if not _redo_stack:
+        return {"ok": False, "error": "Nothing to redo"}
+    undo_fn, redo_fn = _redo_stack.pop()
+    redo_fn()
+    _undo_stack.append((undo_fn, redo_fn))
+    return {"ok": True, "remaining": len(_redo_stack)}
 
 
 _CHANNEL_MAP = {
@@ -347,12 +456,36 @@ def set_layer_channel(layer_id: str, channel: str, value) -> dict:
     import substance_painter.colormanagement as cm
 
     ch = getattr(ls.ChannelType, _CHANNEL_MAP[ch_key])
+
+    # 读取旧值
+    old_value = None
+    try:
+        src = node.get_source(ch)
+        if src is not None and hasattr(src, "get_color"):
+            c = src.get_color()
+            old_raw = c.value_raw
+            if ch_key == "basecolor":
+                old_value = f"#{int(old_raw[0]*255):02x}{int(old_raw[1]*255):02x}{int(old_raw[2]*255):02x}"
+            else:
+                old_value = old_raw[0]
+    except Exception:
+        pass
+
+    # 设置新值
     if ch_key == "basecolor":
         r, g, b = _hex_to_rgb(str(value))
         node.set_source(ch, cm.Color(r, g, b))
     else:
         v = float(value)
         node.set_source(ch, cm.Color(v, v, v))
+
+    # 记录 undo
+    if old_value is not None:
+        _push_undo(
+            undo_fn=lambda: set_layer_channel(layer_id, channel, old_value),
+            redo_fn=lambda: set_layer_channel(layer_id, channel, value),
+        )
+
     return {"ok": True}
 
 
@@ -407,14 +540,21 @@ def duplicate_layer(layer_id: str) -> dict:
             try:
                 src = node.get_source(ch)
                 if src is not None and hasattr(src, "get_color"):
-                    # SourceUniformColor → get_color().value_raw → new cm.Color
                     c = src.get_color()
                     raw = c.value_raw
                     new_node.set_source(ch, cm.Color(raw[0], raw[1], raw[2]))
             except (AttributeError, TypeError):
                 pass
 
-    return {"id": str(new_node.uid()), "name": new_node.get_name()}
+    new_id = str(new_node.uid())
+
+    # 记录 undo
+    _push_undo(
+        undo_fn=lambda: delete_layer(new_id),
+        redo_fn=lambda: duplicate_layer(layer_id),
+    )
+
+    return {"id": new_id, "name": new_node.get_name()}
 
 
 def move_layer(layer_id: str, target_id: str, position: str = "above") -> dict:

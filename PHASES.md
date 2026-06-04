@@ -42,6 +42,8 @@
 | Phase 7 | 图层高级 + TextureSet + 项目 + 相机 | ✅ 完成 |
 | Phase 8 | 批量 Undo（ScopedModification） | ✅ 完成 |
 | Phase 9 | JS API 集成（Baking + 通道管理） | ✅ 完成 |
+| Phase 10 | Undo/Redo（QML 插件） | ✅ 完成（确认不可用） |
+| Phase 11 | 外置 Undo/Redo 栈 | ✅ 完成 |
 
 ---
 
@@ -658,6 +660,59 @@ def remove_texture_set_channel(texture_set_name: str, channel_id: str) -> dict:
 - `sp_add_texture_set_channel` / `sp_remove_texture_set_channel` live 验证
 - PHASES.md 更新 Phase 9 状态为 ✅
 - AGENTS.md 更新 tool 列表
+
+---
+
+## Phase 10 — Undo/Redo（QML 插件）
+
+**状态：** 🔲 待开始
+
+**目标：** 通过 QML 插件暴露 undo/redo 功能，补上 Python API 的缺失。
+
+**背景：**
+- SP 10.x 的 undo 栈只记录 UI 操作，不记录 Python API 操作
+- `sp.js.evaluate("alg.ui.clickButton('Undo')")` 报 `findChild` 错误（缺少 QML 上下文）
+- `QAction.trigger()` 找到 Ctrl+Z action 但不生效
+- `ScopedModification` 不能让 Python 操作进入 undo 栈
+
+**方案：QML 插件暴露 JS 函数**
+
+QML 插件运行在完整 QML 上下文中，可能能访问 `sp.js.evaluate()` 无法访问的对象。
+
+**任务 10.1 — 创建 QML 插件：**
+
+```
+plugin/js/sp-undo-redo/
+├── plugin.json
+└── main.qml
+```
+
+**任务 10.2 — main.qml 探索方向：**
+
+1. 在 `Component.onCompleted` 中查找 `QUndoStack` 引用
+2. 尝试通过 `alg.ui.clickButton` 在 QML context 中触发
+3. 尝试通过 `alg.ui.addAction` 添加 undo 按钮并触发
+4. 尝试通过 QML 的 `Keys` 模拟键盘事件
+
+**任务 10.3 — handlers.py 更新：**
+
+```python
+def undo() -> dict:
+    import substance_painter.js as js
+    js.evaluate("SPUndoRedo.undo()")  # 调用 QML 插件暴露的函数
+    return {"ok": True}
+
+def redo() -> dict:
+    import substance_painter.js as js
+    js.evaluate("SPUndoRedo.redo()")
+    return {"ok": True}
+```
+
+**验收标准：**
+- QML 插件加载成功（SP 控制台显示 loaded）
+- `sp_undo()` 能撤销 Python 创建的图层
+- `sp_redo()` 能重做
+- 124+ 测试全绿
 
 ---
 

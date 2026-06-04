@@ -379,7 +379,7 @@ def _make_sp_mock():
     js_mod = types.ModuleType("substance_painter.js")
 
     def _js_evaluate(code):
-        """Mock JS evaluate — 简单模拟 alg API 调用。"""
+        """Mock JS evaluate — 模拟 alg API 调用。"""
         if "alg.baking.bake" in code:
             return '{"ok": true}'
         elif "alg.texturesets.addChannel" in code:
@@ -392,6 +392,10 @@ def _make_sp_mock():
             return "true"
         elif "alg.project.name" in code:
             return '"MockProject"'
+        elif "SPUndoRedo" in code:
+            return '{"ok": true}'
+        elif "alg.ui.clickButton" in code:
+            return '{"ok": true}'
         return '"ok"'
 
     js_mod.evaluate = _js_evaluate
