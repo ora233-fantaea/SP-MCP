@@ -10,11 +10,7 @@
 本项目为 Substance 3D Painter 实现了一个 MCP（Model Context Protocol）Server，使得各大主流的 LLM（如 OpenCode, Claude Code, Cursor 等）能够通过标准化工具直接与 Painter 交互。该项目旨在利用大模型强大的推理与设计能力，自动化驱动 **视觉创作**（如材质设计、皮肤制作、磨损做旧等）工作流。
 
 </div>
-> [!WARNING]
-> 该项目必须搭配支持视觉输入的 LLM（如 Kimi k2.6、Gemini 3.5 Flash、Gemini 3.1 Pro、Claude Sonnet 4/Claude Opus 4.5（或更高） 等模型），因为材质创作工作流依赖 LLM 对截图的视觉评估来驱动迭代决策。
-
-
-## ⚠️ 该项目必须搭配支持视觉输入的 LLM，如 Kimi k2.6、Gemini 3.5 Flash、Gemini 3.1 Pro、Claude Sonnet 4/Claude Opus 4.5（或更高） 等模型
+[!WARNING]该项目必须搭配支持视觉输入的 LLM（如 Kimi k2.6、Gemini 3.5 Flash、Gemini 3.1 Pro、Claude Sonnet 4/Claude Opus 4.5（或更高） 等模型），因为材质创作工作流依赖 LLM 对截图的视觉评估来驱动迭代决策。
 
 ## 🎯 核心能力与工作流
 
