@@ -14,7 +14,6 @@
 ## ⚠️ 该项目必须搭配支持视觉输入和支持工具调用（Tool Calling）的 LLM（缺一不可！），如 Kimi k2.6、Gemini 3.5 Flash、Gemini 3.1 Pro、Claude Sonnet 4/4.5/4.6、Claude Opus 4.5（或更高） 、Qwen 3.5/3.6 等模型，因为材质创作工作流依赖 LLM 对截图的视觉评估来驱动迭代决策。
 
 
-
 ## 🎯 核心能力与工作流
 
 通过本 MCP Server，AI 可以实现以下核心闭环操作：
