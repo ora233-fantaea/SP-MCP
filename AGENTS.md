@@ -193,10 +193,8 @@ prop 可选值：`opacity` / `visible` / `name` / `blend_mode`
 
 **`sp_undo()` / `sp_redo()`**
 撤销 / 重做上一步操作。
-**SP 10.x 无 Python API，Phase 10 确认不可用。**
-**Phase 11 实现外置 undo/redo 栈，在 Python 端记录逆操作。**
-支持：`add_fill_layer` / `delete_layer` / `set_layer_property` / `set_layer_channel` / `duplicate_layer` 等。
-批量操作（`begin_batch` / `end_batch`）自动合并为一条 undo。
+**通过 SP 原生 undo 栈实现**，用户在 SP 按 Ctrl+Z 也能撤销 MCP 操作。
+所有 layerstack API 操作（add/delete/modify）自动推入 SP undo 栈。
 
 **`sp_set_layer_channel(layer_id, channel, value)`**
 为指定通道设定数值。channel: `"Roughness"` / `"Metallic"` / `"Height"` / `"BaseColor"`。

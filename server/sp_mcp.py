@@ -332,22 +332,75 @@ def sp_add_paint_layer(name: str) -> dict:
     return sp.call("add_paint_layer", {"name": name})
 
 
+_UNDO_REDO_CODE = """\
+from substance_painter.ui import get_main_window
+from PySide2.QtWidgets import QUndoView
+mv = get_main_window()
+views = mv.findChildren(QUndoView)
+for v in views:
+    if v.objectName() == 'history':
+        s = v.stack()
+        if s.canUndo():
+            s.undo()
+            print('ok')
+        else:
+            print('empty')
+        break
+else:
+    print('not_found')
+"""
+
+_REDO_CODE = """\
+from substance_painter.ui import get_main_window
+from PySide2.QtWidgets import QUndoView
+mv = get_main_window()
+views = mv.findChildren(QUndoView)
+for v in views:
+    if v.objectName() == 'history':
+        s = v.stack()
+        if s.canRedo():
+            s.redo()
+            print('ok')
+        else:
+            print('empty')
+        break
+else:
+    print('not_found')
+"""
+
+
 @mcp.tool()
 def sp_undo() -> dict:
     """
     撤销上一步操作。
-    通过触发 Painter 的 Ctrl+Z 动作实现。
+    通过 SP 原生 undo 栈实现，用户在 SP 按 Ctrl+Z 也能撤销 MCP 操作。
+    所有 layerstack API 操作（add/delete/modify）自动推入 SP undo 栈。
     """
-    return sp.call("undo")
+    result = sp.call("run_python", {"code": _UNDO_REDO_CODE})
+    output = result.get("stdout", "").strip() if isinstance(result, dict) else ""
+    if output == "ok":
+        return {"ok": True}
+    elif output == "empty":
+        return {"ok": False, "error": "Nothing to undo"}
+    else:
+        return {"ok": False, "error": "Undo history not found"}
 
 
 @mcp.tool()
 def sp_redo() -> dict:
     """
     重做上一步被撤销的操作。
-    通过触发 Painter 的 Ctrl+Y 动作实现。
+    通过 SP 原生 redo 栈实现，用户在 SP 按 Ctrl+Y 也能重做 MCP 操作。
+    所有 layerstack API 操作（add/delete/modify）自动推入 SP undo 栈。
     """
-    return sp.call("redo")
+    result = sp.call("run_python", {"code": _REDO_CODE})
+    output = result.get("stdout", "").strip() if isinstance(result, dict) else ""
+    if output == "ok":
+        return {"ok": True}
+    elif output == "empty":
+        return {"ok": False, "error": "Nothing to redo"}
+    else:
+        return {"ok": False, "error": "Undo history not found"}
 
 
 @mcp.tool()

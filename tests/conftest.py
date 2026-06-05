@@ -679,10 +679,41 @@ def _make_sp_mock():
     _iray_action.setParent(_mock_main_window)
 
     # Undo/Redo QActions
-    _undo_action = _MockQAction("Undo", enabled=True, shortcut="Ctrl+Z")
+    _undo_action = _MockQAction("UNDO", enabled=True, shortcut="Ctrl+Z")
     _undo_action.setParent(_mock_main_window)
-    _redo_action = _MockQAction("Redo", enabled=True, shortcut="Ctrl+Y")
+    _redo_action = _MockQAction("REDO", enabled=True, shortcut="Ctrl+Y")
     _redo_action.setParent(_mock_main_window)
+
+    # Mock QUndoView + QUndoStack for undo/redo
+    class _MockQUndoStack:
+        def __init__(self):
+            self._can_undo = False
+            self._can_redo = False
+            self._count = 0
+        def canUndo(self): return self._can_undo
+        def canRedo(self): return self._can_redo
+        def count(self): return self._count
+        def undo(self):
+            self._can_undo = False
+            self._can_redo = True
+        def redo(self):
+            self._can_redo = False
+            self._can_undo = True
+        def push(self, cmd):
+            self._count += 1
+            self._can_undo = True
+            self._can_redo = False
+
+    class _MockQUndoView(_MockWidget):
+        def __init__(self, name="", parent=None):
+            super().__init__(name, parent)
+            self._stack = _MockQUndoStack()
+        def stack(self): return self._stack
+
+    pyside2_widgets.QUndoStack = _MockQUndoStack
+    pyside2_widgets.QUndoView = _MockQUndoView
+
+    _mock_undo_view = _MockQUndoView("history", _mock_main_window)
 
     # Mock QOpenGLWidget (viewport)
     _mock_viewport = _MockQOpenGLWidget("Viewer3D", _mock_main_window)
@@ -729,6 +760,17 @@ SP_MOCK, LAYERS_MOCK = _make_sp_mock()
 def fresh_layer_stack():
     import substance_painter.layerstack as ls
     ls._build_default_stack()
+    # Reset mock undo stack state
+    from PySide2.QtWidgets import QUndoView
+    from substance_painter.ui import get_main_window
+    main_win = get_main_window()
+    if main_win:
+        undo_view = main_win.findChild(QUndoView, "history")
+        if undo_view:
+            stack = undo_view.stack()
+            stack._can_undo = False
+            stack._can_redo = False
+            stack._count = 0
     yield ls._root_nodes
 
 

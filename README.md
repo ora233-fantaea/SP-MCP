@@ -1,5 +1,11 @@
 # Substance 3D Painter MCP Server (SP-MCP)
 
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![SP Version](https://img.shields.io/badge/Substance%20Painter-10.0%2B-ff6b35)](https://www.adobe.com/products/substance3d-painter.html)
+[![fastmcp](https://img.shields.io/badge/fastmcp-0.9%2B-6366f1)](https://github.com/jlowin/fastmcp)
+[![tests](https://img.shields.io/badge/tests-182%2F182-brightgreen)](./tests/)
+[![MCP Tools](https://img.shields.io/badge/MCP%20tools-40-6e5494)](./README.md#mcp-tools)
+
 本项目为 Substance 3D Painter 实现了一个 MCP（Model Context Protocol）Server，使得各大主流的 LLM（如 OpenCode, Claude Code, Cursor 等）能够通过标准化工具直接与 Painter 交互。该项目旨在利用大模型强大的推理与设计能力，自动化驱动 **视觉创作**（如材质设计、皮肤制作、磨损做旧等）工作流。
 
 ## 🎯 核心能力与工作流
@@ -107,6 +113,9 @@ pip install fastmcp requests
 
 ## 🛠️ MCP Tools（40 个）
 
+> 所有图层修改操作（`add_fill_layer`、`set_layer_channel`、`apply_smart_material` 等）自动包裹 `ScopedModification`，**每个 API 调用 = 1 条 undo**。
+> 用 `begin_batch` / `end_batch` 可将多个操作再合并为 1 条。
+
 ### 连接
 
 | Tool | 说明 |
@@ -134,15 +143,12 @@ pip install fastmcp requests
 | `sp_delete_layer(layer_id)` | 删除图层 |
 | `sp_duplicate_layer(layer_id)` | 复制图层 |
 
-### Smart Material / 普通材质
+### Undo / Redo
 
 | Tool | 说明 |
 |------|------|
-| `sp_list_shelf_materials(filter)` | 列出 Smart Material（122 个） |
-| `sp_apply_smart_material(layer_id, name)` | 应用 Smart Material |
-| `sp_add_smart_mask(layer_id, mask_name)` | 添加程序化遮罩（66 个可用） |
-| `sp_list_materials(filter)` | 列出普通材质（917+ 个 SUBSTANCE 类型） |
-| `sp_apply_material(layer_id, name)` | 应用普通材质到所有通道 |
+| `sp_undo()` | 撤销上一步（通过 SP 原生 QUndoStack，等同于 Ctrl+Z） |
+| `sp_redo()` | 重做（通过 SP 原生 QUndoStack，等同于 Ctrl+Y） |
 
 ### 批量 Undo
 
@@ -207,7 +213,6 @@ pip install fastmcp requests
 
 | 操作 | 替代方案 |
 |------|---------|
-| Undo / Redo | `Ctrl+Z` / `Ctrl+Y` |
 | 移动图层 | UI 拖拽 |
 | 分组图层 | `Ctrl+G` |
 | 解散分组 | `Ctrl+Shift+G` |
