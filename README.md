@@ -25,7 +25,7 @@
 
 本项目包含三大部分：
 
-*   **`plugin/` (SP 内嵌插件)**：作为 Painter 的 Python 插件运行，启动 HTTP Server（端口 `27182`），接收并执行 `substance_painter` API 调用。
+*   **`plugin/sp_bridge/` (SP 内嵌插件)**：作为 Painter 的 Python 插件运行，启动 HTTP Server（端口 `27182`），接收并执行 `substance_painter` API 调用。
 *   **`server/` (MCP Server)**：基于 `FastMCP` 搭建的外部服务，暴露 MCP Tools 给 AI 客户端。
 *   **`plugin/js/` (QML 插件)**：SP 的 QML 插件，提供 UI 菜单项（Tools 菜单）。
 
@@ -52,13 +52,16 @@ LLM / MCP Client
 
 **Python 插件（必需）：**
 
-将 `plugin/` 文件夹内容复制到：
+将 `plugin/sp_bridge/` 文件夹复制到：
 ```
-%USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\sp_bridge\
+%USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\
 ```
-提示：在plugin文件夹下新建sp_bridge文件夹，用于存放三个.py文件
+
+提示：直接将仓库文件的plugin下的sp_bridge文件夹复制到上述路径即可。
+
 **QML 插件（可选）：**
-将 `plugin/js/sp-bake-maps/` 和 `plugin/js/sp-textureset-channels/` 复制到：
+
+将 `plugin/js/sp-bake-maps/`、`plugin/js/sp-textureset-channels/`、`plugin/js/sp-undo-redo/` 复制到：
 ```
 %USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\plugins\
 ```
@@ -66,8 +69,6 @@ LLM / MCP Client
 安装完成后启动 Painter，Python Console 显示：
 ```
 [INFO] sp_bridge: SP Bridge started on port 27182
-[插件 - sp-bake-maps] [SP MCP] Bake Maps plugin loaded
-[插件 - sp-textureset-channe...] [SP MCP] TextureSet Channels plugin loaded
 ```
 
 ### 2. 安装 Python 依赖
