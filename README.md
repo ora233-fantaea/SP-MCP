@@ -1,12 +1,15 @@
+<div align="center">
+
 # Substance 3D Painter MCP Server (SP-MCP)
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![SP Version](https://img.shields.io/badge/Substance%20Painter-10.0%2B-ff6b35)](https://www.adobe.com/products/substance3d-painter.html)
-[![fastmcp](https://img.shields.io/badge/fastmcp-0.9%2B-6366f1)](https://github.com/jlowin/fastmcp)
-[![tests](https://img.shields.io/badge/tests-182%2F182-brightgreen)](./tests/)
-[![MCP Tools](https://img.shields.io/badge/MCP%20tools-40-6e5494)](./README.md#mcp-tools)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=for-the-badge)](https://www.python.org/)
+[![SP](https://img.shields.io/badge/Substance%20Painter-10.0%2B-ff6b35?style=for-the-badge)](https://www.adobe.com/products/substance3d-painter.html)
+[![fastmcp](https://img.shields.io/badge/fastmcp-0.9%2B-6366f1?style=for-the-badge)](https://github.com/jlowin/fastmcp)
+[![requests](https://img.shields.io/badge/requests-2.31%2B-2ea44f?style=for-the-badge)](https://pypi.org/project/requests/)
 
 本项目为 Substance 3D Painter 实现了一个 MCP（Model Context Protocol）Server，使得各大主流的 LLM（如 OpenCode, Claude Code, Cursor 等）能够通过标准化工具直接与 Painter 交互。该项目旨在利用大模型强大的推理与设计能力，自动化驱动 **视觉创作**（如材质设计、皮肤制作、磨损做旧等）工作流。
+
+</div>
 
 ## 🎯 核心能力与工作流
 
