@@ -51,11 +51,12 @@ LLM / MCP Client
 ### 1. 部署 Painter 插件
 
 **Python 插件（必需）：**
+
 将 `plugin/` 文件夹内容复制到：
 ```
 %USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\sp_bridge\
 ```
-
+提示：在plugin文件夹下新建sp_bridge文件夹，用于存放三个.py文件
 **QML 插件（可选）：**
 将 `plugin/js/sp-bake-maps/` 和 `plugin/js/sp-textureset-channels/` 复制到：
 ```
