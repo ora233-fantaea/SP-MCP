@@ -34,9 +34,9 @@ LLM / MCP Client
       ↕  stdio 或 SSE
   server/sp_mcp.py          MCP Tools 定义（40 个）
       ↕  HTTP POST localhost:27182
-  plugin/bridge.py           HTTP Server + QTimer 调度
+  plugin/sp_bridge/bridge.py           HTTP Server + QTimer 调度
       ↕  QTimer 轮询队列（主线程执行）
-  plugin/handlers.py         substance_painter.* API 调用
+  plugin/sp_bridge/handlers.py         substance_painter.* API 调用
       ↕
   Painter 图层栈 / 导出 / 烘焙 / JS API
 ```

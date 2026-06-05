@@ -1,5 +1,5 @@
 """
-plugin/handlers.py
+plugin/sp_bridge/handlers.py
 
 所有 substance_painter.* API 调用都在这里。
 这个模块的函数只能在 Painter 主线程执行（由 bridge.py 的调度机制保证）。

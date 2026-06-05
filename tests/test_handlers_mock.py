@@ -15,7 +15,7 @@ test_handlers_mock.py — 测试 plugin/handlers.py 的业务逻辑。
 """
 
 import pytest
-from plugin import handlers  # noqa: E402
+from plugin.sp_bridge import handlers  # noqa: E402
 
 
 # ── Phase 2: get_layer_stack ─────────────────────────────────────────────────
@@ -472,14 +472,14 @@ class TestAddPaintLayer:
 class TestUndo:
     def test_nothing_to_undo(self, fresh_layer_stack):
         """Mock QUndoStack canUndo returns False by default."""
-        import plugin.handlers as h
+        import plugin.sp_bridge.handlers as h
         result = h.undo()
         assert result["ok"] is False
         assert "Nothing to undo" in result["error"]
 
     def test_undo_add_fill_layer(self, fresh_layer_stack):
         """Mock QUndoStack.undo() is called."""
-        import plugin.handlers as h
+        import plugin.sp_bridge.handlers as h
         h.add_fill_layer("UndoTest")
         # Manually enable mock undo (real SP tracks layerstack ops automatically)
         from substance_painter.ui import get_main_window
@@ -491,7 +491,7 @@ class TestUndo:
         assert result["ok"] is True
 
     def test_undo_set_property(self, fresh_layer_stack):
-        import plugin.handlers as h
+        import plugin.sp_bridge.handlers as h
         layer_id = h.get_layer_stack()[0]["id"]
         h.set_layer_property(layer_id, "opacity", 0.3)
         from substance_painter.ui import get_main_window
@@ -506,14 +506,14 @@ class TestUndo:
 class TestRedo:
     def test_nothing_to_redo(self, fresh_layer_stack):
         """Mock QUndoStack canRedo returns False by default."""
-        import plugin.handlers as h
+        import plugin.sp_bridge.handlers as h
         result = h.redo()
         assert result["ok"] is False
         assert "Nothing to redo" in result["error"]
 
     def test_redo_after_undo(self, fresh_layer_stack):
         """Mock QUndoStack.redo() is called."""
-        import plugin.handlers as h
+        import plugin.sp_bridge.handlers as h
         h.add_fill_layer("RedoTest")
         from substance_painter.ui import get_main_window
         from PySide2.QtWidgets import QUndoView

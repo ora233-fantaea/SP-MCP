@@ -44,6 +44,7 @@
 | Phase 9 | JS API 集成（Baking + 通道管理） | ✅ 完成 |
 | Phase 10 | Undo/Redo 探索 | ✅ 完成（发现 SP 原生 undo 栈跟踪 Python API 操作） |
 | Phase 11 | 外置 Undo/Redo 栈 | ✅ 已删除（改用 SP 原生 undo/redo） |
+| Phase 12 | 自动 batch + 文件重构 | ✅ 完成 |
 
 ---
 
@@ -255,7 +256,7 @@ description: 导出贴图并转换为 VTF 格式
 
 ## Phase 6 — 图层基础 + 通道 + Undo
 
-**状态：** 🔲 待开始
+**状态：** ✅ 完成
 
 **目标：** 补齐现有 handler 测试缺口 + 新增 7 个 tool，覆盖图层增删、分组、绘画图层、undo/redo、通道值控制。
 
@@ -382,7 +383,7 @@ description: 导出贴图并转换为 VTF 格式
 
 ## Phase 7 — 图层高级 + TextureSet + 项目 + 相机
 
-**状态：** 🔲 待开始
+**状态：** ✅ 完成
 
 **目标：** 新增 11 个 tool，覆盖图层复制/移动/分组/解散、纹理集管理、项目操作、相机控制。
 
@@ -523,7 +524,7 @@ import substance_painter.environment; print(dir(substance_painter.environment))
 
 ## Phase 8 — 批量 Undo（ScopedModification）
 
-**状态：** 🔲 待开始
+**状态：** ✅ 完成
 
 **目标：** 将 LLM 发起的多个 layer 操作合并为单条 undo，用户在 SP 里按一次 Ctrl+Z 即可撤销整批操作。
 
@@ -591,7 +592,7 @@ def sp_end_batch() -> dict:
 
 ## Phase 9 — JS API 集成（Baking + 通道管理）
 
-**状态：** 🔲 待开始
+**状态：** ✅ 完成
 
 **目标：** 通过 `sp.js.evaluate()` 调用 SP 的 `alg` JS API，补上 Python API 缺失的功能。
 
@@ -685,6 +686,64 @@ def remove_texture_set_channel(texture_set_name: str, channel_id: str) -> dict:
 
 **原方案：** 外置 Python 栈记录逆操作
 **现方案：** 直接调用 SP 原生 undo/redo，代码更简洁，与 SP UI 完全同步。
+
+---
+
+## Phase 12 — 自动 batch + 文件重构
+
+**状态：** ✅ 完成
+
+**目标：** 每个图层修改 API 调用自动包裹 `ScopedModification`，确保 1 次调用 = 1 条 undo；同时将 plugin .py 文件整合到 `sp_bridge/` 子目录。
+
+### 任务 12.1 — `_auto_batch()` 上下文管理器
+
+```python
+@contextlib.contextmanager
+def _auto_batch(name: str):
+    """如果外部 batch 已激活则跳过，否则用 ScopedModification 自动包裹。"""
+    if _batch_scope is not None:
+        yield; return
+    scope = ls.ScopedModification(name)
+    scope.__enter__()
+    try: yield
+    finally: scope.__exit__(None, None, None)
+```
+
+### 任务 12.2 — 包裹所有图层修改 handler
+
+| handler | batch 名称 | 原 undo 数 | 现 undo 数 |
+|---------|-----------|-----------|-----------|
+| `add_fill_layer` | `"Add Fill Layer 'xxx'"` | 4-5 | 1 |
+| `add_group_layer` | `"Add Group Layer 'xxx'"` | 2 | 1 |
+| `add_paint_layer` | `"Add Paint Layer 'xxx'"` | 2 | 1 |
+| `delete_layer` | `"Delete layer"` | 1 | 1 |
+| `set_layer_property` | `"Set layer {prop}"` | 1 | 1 |
+| `set_layer_channel` | `"Set {channel} channel"` | 1 | 1 |
+| `duplicate_layer` | `"Duplicate layer"` | 多 | 1 |
+| `apply_smart_material` | `"Apply Smart Material 'xxx'"` | 多 | 1 |
+| `add_smart_mask` | `"Add Smart Mask 'xxx'"` | 多 | 1 |
+| `apply_material` | `"Apply Material 'xxx'"` | 多 | 1 |
+
+**嵌套兼容：** `_auto_batch` 检测 `_batch_scope`，外层有 `begin_batch/end_batch` 时自动跳过。
+
+### 任务 12.3 — 文件重构
+
+```
+plugin/                →  plugin/
+├── __init__.py  (删)      ├── sp_bridge/
+├── bridge.py    (删)      │   ├── __init__.py
+├── handlers.py  (删)      │   ├── bridge.py
+└── js/                    │   └── handlers.py
+                           └── js/
+```
+
+相对导入自动适配（`from . import bridge` / `from . import handlers`），测试导入更新为 `from plugin.sp_bridge import handlers`。
+
+### 验收标准
+
+- 182 测试全绿
+- PHASES.md / AGENTS.md / README.md 文档同步更新
+- README 添加 for-the-badge 依赖徽章
 
 ---
 

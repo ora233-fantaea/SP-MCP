@@ -1,5 +1,5 @@
 """
-plugin/bridge.py
+plugin/sp_bridge/bridge.py
 
 跨线程调度方案：轮询队列
   - BridgeServer.start() 在主线程创建一个 50ms QTimer，持续消费 _task_queue

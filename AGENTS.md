@@ -41,8 +41,9 @@ Phase 2 探索发现以下与文档/预期不符的实际 API，所有代码必�
 | Scalar 通道用 `ls.Color` | 必须用 `colormanagement.Color(v,v,v)` |
 | `node.get_source()` 返回 Color | 返回 `SourceUniformColor`，需 `.get_color().value_raw` 取值 |
 | `move_node()` / `duplicate_node()` | SP 10.x 不存在，用 UI 操作 |
-| `substance_painter.undo` | 不存在，用 `ScopedModification` 批量合并 + 用户 Ctrl+Z |
+| `substance_painter.undo` | 不存在。用 SP 原生 QUndoStack（`QUndoView("history").stack()` 的 `undo()`/`redo()`），handler 自动包裹 `ScopedModification` |
 | `ScopedModification` 只能 `with` | 支持手动 `__enter__()` / `__exit__()` 跨 HTTP 调用 |
+| 每个 layer API 调用生成多条 undo | 每个 handler 自动包裹 `_auto_batch("操作名")`，1 个 API 调用 = 1 条 undo |
 | `substance_painter.js` | JS API 入口，`js.evaluate("alg.xxx")` 调用 |
 | Baking 用 Python API | 不存在，用 `js.evaluate("alg.baking.bake(name)")` |
 | Texture Set 通道管理 | Python API 不完整，用 `js.evaluate("alg.texturesets.addChannel(...)")` |
@@ -54,10 +55,12 @@ Phase 2 探索发现以下与文档/预期不符的实际 API，所有代码必�
 
 ```
 sp-mcp/
-├── plugin/                     # 装入 Painter 的嵌入式插件
-│   ├── __init__.py             # 插件入口：start_plugin / close_plugin
-│   ├── bridge.py               # HTTP server（独立线程）+ QTimer 轮询队列调度
-│   └── handlers.py             # substance_painter.* API 的实际调用
+├── plugin/
+│   ├── sp_bridge/               # 装入 Painter 的嵌入式插件
+│   │   ├── __init__.py             # 插件入口：start_plugin / close_plugin
+│   │   ├── bridge.py               # HTTP server（独立线程）+ QTimer 轮询队列调度
+│   │   └── handlers.py             # substance_painter.* API 的实际调用
+│   └── js/                      # QML 插件（可选）
 ├── server/
 │   ├── sp_mcp.py               # FastMCP server，暴露 MCP tools
 │   └── client.py               # 对 plugin HTTP bridge 的封装（requests）
@@ -92,9 +95,9 @@ LLM / MCP Client
       ↕  stdio 或 SSE
   server/sp_mcp.py          外部进程，FastMCP，tool 定义
       ↕  HTTP POST localhost:27182
-  plugin/bridge.py          Painter 内嵌 Python，HTTP server 线程
+  plugin/sp_bridge/bridge.py          Painter 内嵌 Python，HTTP server 线程
       ↕  QTimer 轮询队列（每 50ms，主线程执行）
-  plugin/handlers.py        主线程执行，substance_painter.* API
+  plugin/sp_bridge/handlers.py        主线程执行，substance_painter.* API
       ↕
   Painter 图层栈 / 导出系统
 ```
@@ -263,7 +266,7 @@ sp_end_batch()
 → 用户按 Ctrl+Z 一次撤销全部 3 个操作
 ```
 
-### Phase 9 — JS API 集成（待实现）
+### Phase 9 — JS API 集成
 
 通过 `sp.js.evaluate()` 调用 SP 的 `alg` JS API，补上 Python API 缺失的功能。
 
@@ -393,3 +396,4 @@ python sp2vtf/convert.py --input ./export/gun_skin_v1 --output ./vtf/
 - Smart Material API 需要 SP 10.0+，9.x 上相关 tool 返回明确错误
 - Layer id 在 Painter 重启后会变化，不要跨 session 缓存
 - `schedule_on_ui_thread` 在 SP 10.x 不存在，已用 QTimer 轮询方案替代
+- `sp_move_layer` / `sp_group_layers` / `sp_ungroup_layer` / `sp_frame_mesh` 在 SP 10.x 无 Python API，返回 NotImplementedError

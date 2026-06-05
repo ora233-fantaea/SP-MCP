@@ -1,5 +1,5 @@
 """
-plugin/__init__.py
+plugin/sp_bridge/__init__.py
 """
 
 import traceback
