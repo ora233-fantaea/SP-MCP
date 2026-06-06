@@ -668,14 +668,41 @@ def save_project() -> dict:
 
 
 def set_camera(
-    x: float, y: float, z: float,
-    target_x: float, target_y: float, target_z: float,
-    fov: float,
+    x: float = 0.0, y: float = 0.0, z: float = 0.0,
+    target_x: float = 0.0, target_y: float = 0.0, target_z: float = 0.0,
+    fov: float = 0.0,
 ) -> dict:
+    import math
     import substance_painter.display as display
+
     cam = display.Camera.get_default_camera()
-    cam.position = [x, y, z]
-    cam.field_of_view = fov
+
+    # 读取当前状态
+    px, py, pz = cam.position
+    rx, ry, rz = cam.rotation
+    current_fov = cam.field_of_view
+
+    # 位置：非零值才覆盖
+    new_x = x if x != 0.0 else px
+    new_y = y if y != 0.0 else py
+    new_z = z if z != 0.0 else pz
+    cam.position = [new_x, new_y, new_z]
+
+    # FOV：非零值才覆盖
+    cam.field_of_view = fov if fov != 0.0 else current_fov
+
+    # 目标点：有值时计算旋转朝向目标
+    if target_x != 0.0 or target_y != 0.0 or target_z != 0.0:
+        dx = target_x - new_x
+        dy = target_y - new_y
+        dz = target_z - new_z
+        length = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if length > 0.001:
+            # 计算欧拉角（简化版：只算 yaw/pitch）
+            yaw = math.degrees(math.atan2(dx, dz))
+            pitch = math.degrees(math.atan2(-dy, math.sqrt(dx * dx + dz * dz)))
+            cam.rotation = [pitch, yaw, rz]
+
     return {"ok": True}
 
 
