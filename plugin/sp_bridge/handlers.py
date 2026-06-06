@@ -55,6 +55,62 @@ def _auto_batch(name: str):
         scope.__exit__(None, None, None)
 
 
+# ── 节点克隆辅助 — 供 move/group/ungroup 进行 delete+re-insert ──
+
+
+def _copy_channels(src_node, dst_node):
+    import substance_painter.layerstack as ls
+    import substance_painter.colormanagement as cm
+    for ch in (ls.ChannelType.BaseColor, ls.ChannelType.Roughness,
+               ls.ChannelType.Metallic, ls.ChannelType.Height, ls.ChannelType.Normal):
+        dst_node.set_opacity(src_node.get_opacity(ch), ch)
+        dst_node.set_blending_mode(src_node.get_blending_mode(ch), ch)
+        try:
+            src = src_node.get_source(ch)
+            if src is not None:
+                if hasattr(src, "get_color"):
+                    c = src.get_color()
+                    raw = c.value_raw
+                    dst_node.set_source(ch, cm.Color(raw[0], raw[1], raw[2]))
+                else:
+                    dst_node.set_source(ch, src)
+        except (AttributeError, TypeError):
+            pass
+
+
+def _clone_node(src_node, insert_pos):
+    """在 insert_pos 处创建 src_node 的完整克隆，返回新节点。"""
+    import substance_painter.layerstack as ls
+
+    node_type = type(src_node).__name__
+
+    if node_type == "GroupLayerNode":
+        new_node = ls.insert_group(insert_pos)
+        new_node.set_name(src_node.get_name())
+        new_node.set_visible(src_node.is_visible())
+        new_node.set_opacity(
+            src_node.get_opacity(ls.ChannelType.BaseColor),
+            ls.ChannelType.BaseColor,
+        )
+        for child in src_node.sub_layers():
+            child_pos = ls.InsertPosition.inside_node(
+                new_node, ls.NodeStack.Substack
+            )
+            _clone_node(child, child_pos)
+    elif node_type == "PaintLayerNode":
+        new_node = ls.insert_paint(insert_pos)
+        new_node.set_name(src_node.get_name())
+        new_node.set_visible(src_node.is_visible())
+        _copy_channels(src_node, new_node)
+    else:  # FillLayerNode (also handles other fill-like types)
+        new_node = ls.insert_fill(insert_pos)
+        new_node.set_name(src_node.get_name())
+        new_node.set_visible(src_node.is_visible())
+        _copy_channels(src_node, new_node)
+
+    return new_node
+
+
 # ── 公共入口 ──────────────────────────────────────────────────────────────────
 
 def dispatch(req: dict):
@@ -504,24 +560,74 @@ def duplicate_layer(layer_id: str) -> dict:
 
 
 def move_layer(layer_id: str, target_id: str, position: str = "above") -> dict:
-    raise NotImplementedError(
-        "move_layer is not available through the SP 10.x Python API. "
-        "Use keyboard shortcuts or drag-and-drop in the UI."
-    )
+    src = _find_layer(layer_id)
+    target = _find_layer(target_id)
+
+    if src is target:
+        return {"ok": True}
+
+    import substance_painter.layerstack as ls
+
+    with _auto_batch("Move layer"):
+        if position == "above":
+            insert_pos = ls.InsertPosition.above_node(target)
+        else:
+            insert_pos = ls.InsertPosition.below_node(target)
+
+        new_node = _clone_node(src, insert_pos)
+        ls.delete_node(src)
+
+    return {"id": str(new_node.uid()), "name": new_node.get_name(), "ok": True}
 
 
 def group_layers(layer_ids: list) -> dict:
-    raise NotImplementedError(
-        "group_layers is not available through the SP 10.x Python API. "
-        "Select layers in UI and press Ctrl+G."
-    )
+    import substance_painter.layerstack as ls
+    import substance_painter.textureset as ts
+
+    with _auto_batch("Group layers"):
+        nodes = [_find_layer(uid) for uid in layer_ids]
+        stack = ts.get_active_stack()
+        root_nodes = ls.get_root_layer_nodes(stack)
+
+        # Sort by stack order
+        all_flat = []
+        def _flatten(ns):
+            for n in ns:
+                all_flat.append(n)
+                if type(n).__name__ == "GroupLayerNode":
+                    _flatten(n.sub_layers())
+        _flatten(root_nodes)
+        sorted_nodes = sorted(nodes, key=lambda n: all_flat.index(n) if n in all_flat else 9999)
+
+        first = sorted_nodes[0]
+        group = ls.insert_group(ls.InsertPosition.above_node(first))
+        group.set_name("Group")
+
+        for node in sorted_nodes:
+            child_pos = ls.InsertPosition.inside_node(group, ls.NodeStack.Substack)
+            _clone_node(node, child_pos)
+            ls.delete_node(node)
+
+    return {"id": str(group.uid()), "name": group.get_name(), "ok": True}
 
 
 def ungroup_layer(layer_id: str) -> dict:
-    raise NotImplementedError(
-        "ungroup_layer is not available through the SP 10.x Python API. "
-        "Select group in UI and press Ctrl+Shift+G."
-    )
+    import substance_painter.layerstack as ls
+
+    with _auto_batch("Ungroup layer"):
+        group = _find_layer(layer_id)
+        if type(group).__name__ != "GroupLayerNode":
+            raise ValueError(f"Layer is not a group: {layer_id!r}")
+
+        children = list(group.sub_layers())
+        for child in children:
+            insert_pos = ls.InsertPosition.above_node(group)
+            _clone_node(child, insert_pos)
+            ls.delete_node(child)
+
+        ls.delete_node(group)
+
+    return {"ok": True}
 
 
 def set_active_texture_set(name: str) -> dict:
@@ -574,10 +680,41 @@ def set_camera(
 
 
 def frame_mesh() -> dict:
-    raise NotImplementedError(
-        "frame_mesh is not available through the Python API. "
-        "Use viewport shortcut 'F' or sp_run_python as workaround."
-    )
+    import math
+    import substance_painter.project as project
+    import substance_painter.display as display
+
+    with _auto_batch("Frame mesh"):
+        bb = project.get_scene_bounding_box()
+        cx, cy, cz = bb.center
+        radius = bb.radius
+
+        cam = display.Camera.get_default_camera()
+        px, py, pz = cam.position
+
+        # Direction from current camera position to bounding box center
+        dx = cx - px
+        dy = cy - py
+        dz = cz - pz
+        length = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+        if length < 0.001:
+            dx, dy, dz = 0.0, 0.0, 1.0
+        else:
+            dx, dy, dz = dx / length, dy / length, dz / length
+
+        # Distance needed to frame the bounding box within the current FOV
+        fov_rad = math.radians(cam.field_of_view / 2.0)
+        distance = radius / math.tan(fov_rad) * 1.2
+
+        # Move camera along current line of sight to the proper distance
+        cam.position = [
+            cx - dx * distance,
+            cy - dy * distance,
+            cz - dz * distance,
+        ]
+
+    return {"ok": True}
 
 
 def set_environment(preset: str) -> dict:

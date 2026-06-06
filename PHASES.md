@@ -45,6 +45,7 @@
 | Phase 10 | Undo/Redo 探索 | ✅ 完成（发现 SP 原生 undo 栈跟踪 Python API 操作） |
 | Phase 11 | 外置 Undo/Redo 栈 | ✅ 已删除（改用 SP 原生 undo/redo） |
 | Phase 12 | 自动 batch + 文件重构 | ✅ 完成 |
+| Phase 13 | 四功能复现（move/group/ungroup/frame） | ✅ 完成 |
 
 ---
 
@@ -744,6 +745,40 @@ plugin/                →  plugin/
 - 182 测试全绿
 - PHASES.md / AGENTS.md / README.md 文档同步更新
 - README 添加 for-the-badge 依赖徽章
+
+---
+
+## Phase 13 — 四功能复现（move/group/ungroup/frame）
+
+**状态：** ✅ 完成
+
+**目标：** 用 delete+re-insert 工作流复现 SP 10.x 缺 Python API 的四个操作。
+
+### 新发现 API
+
+| API | 路径 | 说明 |
+|-----|------|------|
+| `get_node_by_uid(uid: int)` | `substance_painter.layerstack` | 按 int UID 查找节点 |
+| `node.get_parent()` | Node | 返回父节点或 None |
+| `node.get_next_sibling()` | Node | 返回下一个兄弟节点或 None |
+| `node.get_previous_sibling()` | Node | 返回上一个兄弟节点或 None |
+| `get_scene_bounding_box()` | `substance_painter.project` | 返回 BoundingBox(center, dimensions, radius) |
+| `InsertPosition.inside_node(node, NodeStack.Substack)` | layerstack | 在组的子层栈中插入 |
+
+### 实现方式
+
+| 功能 | 方案 |
+|------|------|
+| `move_layer` | `_clone_node(src, pos)` → delete src → 1 条 undo |
+| `group_layers` | `insert_group` → `inside_node(group, Substack)` → clone 每个节点 → delete 原节点 |
+| `ungroup_layer` | 遍历 `sub_layers()` → clone 到 group 位置 → delete child → delete group |
+| `frame_mesh` | `get_scene_bounding_box()` → 计算距离 = radius / tan(fov/2) * 1.2 → 设置 camera.position |
+
+**辅助函数：**
+- `_clone_node(src_node, insert_pos)` — 在指定位置创建同类型节点的完整深拷贝
+- `_copy_channels(src, dst)` — 复制所有 5 个通道的 opacity/blend/source
+
+**验收：** 187 测试全绿，4 个功能 live 验证通过。
 
 ---
 

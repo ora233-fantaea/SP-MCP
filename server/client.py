@@ -12,7 +12,7 @@ import requests
 
 _PORT = int(os.environ.get("SP_BRIDGE_PORT", 27182))
 _BASE_URL = f"http://127.0.0.1:{_PORT}"
-_TIMEOUT = 12.0  # 略大于 bridge 侧的 10s 超时
+_TIMEOUT = 60.0
 
 
 def call(method: str, params: dict | None = None, timeout: float | None = None) -> object:

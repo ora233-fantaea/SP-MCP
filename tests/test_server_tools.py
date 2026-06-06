@@ -25,8 +25,6 @@ def mock_bridge(monkeypatch):
 
     def fake_call(method, params=None, **kwargs):
         params = params or {}
-        if method in ("frame_mesh", "move_layer", "group_layers", "ungroup_layer"):
-            raise NotImplementedError(f"{method} not available")
         responses = {
             "ping":                    {"status": "ok", "sp_version": "10.0.0", "smart_api": True},
             "get_layer_stack":         [
@@ -63,15 +61,16 @@ def mock_bridge(monkeypatch):
                                         "Roughness": {"opacity": 1.0, "blend_mode": "Normal", "source": 0.5}},
             # Phase 7
             "duplicate_layer":         {"id": "300", "name": "Copy_Layer"},
-            "move_layer":              NotImplementedError("move_layer not available"),
-            "group_layers":            NotImplementedError("group_layers not available"),
-            "ungroup_layer":           NotImplementedError("ungroup_layer not available"),
+            "move_layer":              {"ok": True, "id": "1", "name": "Moved"},
+            "group_layers":            {"ok": True, "id": "400", "name": "Group"},
+            "ungroup_layer":           {"ok": True},
             "set_active_texture_set":  {"ok": True},
             "set_texture_set_resolution": {"ok": True},
             "get_project_info":        {"name": "MockProject", "file_path": "/mock/project.spp",
                                         "is_open": True, "is_busy": False},
             "save_project":            {"ok": True},
             "set_camera":              {"ok": True},
+            "frame_mesh":              {"ok": True},
             "set_environment":         {"ok": True},
             # Phase 8
             "begin_batch":             {"ok": True, "batch_name": params.get("name", "")},
@@ -301,28 +300,28 @@ class TestPhase7Tools:
 
     def test_sp_move_layer(self, mock_bridge):
         from server.sp_mcp import sp_move_layer
-        with pytest.raises((ValueError, NotImplementedError)):
-            sp_move_layer(layer_id="1", target_id="2", position="above")
+        result = sp_move_layer(layer_id="1", target_id="2", position="above")
+        assert result["ok"] is True
 
     def test_sp_move_layer_invalid_position(self, mock_bridge):
         from server.sp_mcp import sp_move_layer
-        with pytest.raises((ValueError, NotImplementedError)):
+        with pytest.raises((ValueError, TypeError)):
             sp_move_layer(layer_id="1", target_id="2", position="invalid")
 
     def test_sp_group_layers(self, mock_bridge):
         from server.sp_mcp import sp_group_layers
-        with pytest.raises((ValueError, NotImplementedError)):
-            sp_group_layers(layer_ids=["1", "2"])
+        result = sp_group_layers(layer_ids=["1", "2"])
+        assert result["ok"] is True
 
     def test_sp_group_layers_empty_raises(self, mock_bridge):
         from server.sp_mcp import sp_group_layers
-        with pytest.raises((ValueError, NotImplementedError)):
+        with pytest.raises((ValueError, TypeError)):
             sp_group_layers(layer_ids=[])
 
     def test_sp_ungroup_layer(self, mock_bridge):
         from server.sp_mcp import sp_ungroup_layer
-        with pytest.raises((ValueError, NotImplementedError)):
-            sp_ungroup_layer(layer_id="1")
+        result = sp_ungroup_layer(layer_id="1")
+        assert result["ok"] is True
 
     def test_sp_ungroup_layer_requires_id(self, mock_bridge):
         from server.sp_mcp import sp_ungroup_layer
@@ -367,10 +366,8 @@ class TestPhase7Tools:
 
     def test_sp_frame_mesh(self, mock_bridge):
         from server.sp_mcp import sp_frame_mesh
-        # frame_mesh raises NotImplementedError in mock (no real API)
-        # but the MCP tool layer should still be callable
-        with pytest.raises(NotImplementedError):
-            sp_frame_mesh()
+        result = sp_frame_mesh()
+        assert result["ok"] is True
 
     def test_sp_set_environment(self, mock_bridge):
         from server.sp_mcp import sp_set_environment

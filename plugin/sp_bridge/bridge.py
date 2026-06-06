@@ -67,7 +67,7 @@ class BridgeServer(object):
 
 class _RpcHandler(BaseHTTPRequestHandler):
 
-    TIMEOUT = 10.0
+    TIMEOUT = 60.0
 
     def do_POST(self):
         try:

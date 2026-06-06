@@ -110,6 +110,27 @@ pip install fastmcp requests
 }
 ```
 
+**OpenClaw** (`~/.openclaw/openclaw.json`):
+```json
+{
+  "mcpServers": {
+    "substance-painter": {
+      "command": "<Python路径>",
+      "args": ["<仓库绝对路径>/server/sp_mcp.py"]
+    }
+  }
+}
+```
+
+**Hermes Agent** (`~/.hermes/config.yaml`):
+```yaml
+mcp_servers:
+  substance-painter:
+    command: "<Python路径>"
+    args: ["<仓库绝对路径>/server/sp_mcp.py"]
+```
+Hermes 会自动发现并以 `mcp_substance_painter_<tool>` 注册所有工具。
+
 ### 4. 启动使用
 
 ```
@@ -217,14 +238,10 @@ pip install fastmcp requests
 
 ## ⚠️ 已知限制
 
-以下操作在 SP 10.x 中无 Python API，需要在 Painter UI 中手动完成：
-
-| 操作 | 替代方案 |
-|------|---------|
-| 移动图层 | UI 拖拽 |
-| 分组图层 | `Ctrl+G` |
-| 解散分组 | `Ctrl+Shift+G` |
-| 自动适配视图 | viewport 快捷键 `F` |
+- `sp_capture_viewport` 需要项目打开且 3D viewport 可见
+- Smart Material API 需要 SP 10.0+，9.x 上相关 tool 返回明确错误
+- Layer id 在 Painter 重启后会变化，不要跨 session 缓存
+- `schedule_on_ui_thread` 在 SP 10.x 不存在，已用 QTimer 轮询方案替代
 
 ## 🤝 SP2VTF 集成
 

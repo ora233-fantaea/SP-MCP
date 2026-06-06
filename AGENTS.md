@@ -40,7 +40,10 @@ Phase 2 探索发现以下与文档/预期不符的实际 API，所有代码必�
 | `substance_painter.environment` | 不存在，环境 API 在 `substance_painter.display.set_environment_resource()` |
 | Scalar 通道用 `ls.Color` | 必须用 `colormanagement.Color(v,v,v)` |
 | `node.get_source()` 返回 Color | 返回 `SourceUniformColor`，需 `.get_color().value_raw` 取值 |
-| `move_node()` / `duplicate_node()` | SP 10.x 不存在，用 UI 操作 |
+| `move_node()` / `duplicate_node()` | SP 10.x 不存在 `move_node`。用 `_clone_node`(delete+re-insert 工作流) 实现 move/group/ungroup |
+| `get_node_by_uid()` / `get_parent()` / `get_scene_bounding_box()` | 实际存在！`ls.get_node_by_uid(uid)` 按 int UID 查找，`node.get_parent()` 返回父节点，`project.get_scene_bounding_box()` 返回 BoundingBox(center, dimensions, radius) |
+| `frame_mesh` 无 API | 用 `project.get_scene_bounding_box()` + `display.Camera` 计算实现 |
+| `group_layers` 无 API | 用 `insert_group` + `InsertPosition.inside_node(group, NodeStack.Substack)` + `_clone_node` 实现 |
 | `substance_painter.undo` | 不存在。用 SP 原生 QUndoStack（`QUndoView("history").stack()` 的 `undo()`/`redo()`），handler 自动包裹 `ScopedModification` |
 | `ScopedModification` 只能 `with` | 支持手动 `__enter__()` / `__exit__()` 跨 HTTP 调用 |
 | 每个 layer API 调用生成多条 undo | 每个 handler 自动包裹 `_auto_batch("操作名")`，1 个 API 调用 = 1 条 undo |
@@ -213,36 +216,19 @@ prop 可选值：`opacity` / `visible` / `name` / `blend_mode`
 
 **`sp_move_layer(layer_id, target_id, position)`**
 移动图层到目标图层上方或下方。position: `"above"` / `"below"`。
-**SP 10.x 无 Python API，已标记 NotImplementedError。**
-用 UI 拖拽或 Ctrl+↑/↓。
+**通过 delete+re-insert 工作流实现。**
 
 **`sp_group_layers(layer_ids)`**
 将多个图层打包进新分组。
-**SP 10.x 无 Python API，已标记 NotImplementedError。**
-用 Ctrl+G。
+**通过 `insert_group` + `DeletePosition.inside_node(Substack)` 实现。**
 
 **`sp_ungroup_layer(layer_id)`**
 解散分组，子层提升到父级。
-**SP 10.x 无 Python API，已标记 NotImplementedError。**
-用 Ctrl+Shift+G。
-
-**`sp_set_active_texture_set(name)`**
-切换当前操作的纹理集。
-
-**`sp_set_texture_set_resolution(width, height)`**
-修改当前纹理集分辨率。
-
-**`sp_get_project_info()`**
-读取项目名、路径、颜色空间等信息。
-
-**`sp_save_project()`**
-保存当前项目。
-
-**`sp_set_camera(x, y, z, target_x, target_y, target_z, fov)`**
-设置相机位置和视角。
+**通过递归子节点 → re-insert → delete group 实现。**
 
 **`sp_frame_mesh()`**
 自动适配视图到模型。
+**通过 `project.get_scene_bounding_box()` 计算实现。**
 
 **`sp_set_environment(preset)`**
 切换 HDRI 环境光预设。
@@ -396,4 +382,3 @@ python sp2vtf/convert.py --input ./export/gun_skin_v1 --output ./vtf/
 - Smart Material API 需要 SP 10.0+，9.x 上相关 tool 返回明确错误
 - Layer id 在 Painter 重启后会变化，不要跨 session 缓存
 - `schedule_on_ui_thread` 在 SP 10.x 不存在，已用 QTimer 轮询方案替代
-- `sp_move_layer` / `sp_group_layers` / `sp_ungroup_layer` / `sp_frame_mesh` 在 SP 10.x 无 Python API，返回 NotImplementedError

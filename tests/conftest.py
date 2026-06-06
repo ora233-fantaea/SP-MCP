@@ -143,6 +143,31 @@ def _make_sp_mock():
         def add_mask(self, background):
             self._has_mask = True
 
+        def get_parent(self):
+            return self._parent
+
+        def get_next_sibling(self):
+            if self._parent is None:
+                siblings = layerstack._root_nodes
+            else:
+                siblings = self._parent._children
+            try:
+                idx = siblings.index(self)
+                return siblings[idx + 1] if idx + 1 < len(siblings) else None
+            except ValueError:
+                return None
+
+        def get_previous_sibling(self):
+            if self._parent is None:
+                siblings = layerstack._root_nodes
+            else:
+                siblings = self._parent._children
+            try:
+                idx = siblings.index(self)
+                return siblings[idx - 1] if idx - 1 >= 0 else None
+            except ValueError:
+                return None
+
         ns = {
             "__init__": __init__, "uid": uid, "get_name": get_name,
             "set_name": set_name, "is_visible": is_visible, "set_visible": set_visible,
@@ -150,6 +175,8 @@ def _make_sp_mock():
             "get_blending_mode": get_blending_mode, "set_blending_mode": set_blending_mode,
             "get_stack": get_stack, "set_source": set_source, "get_source": get_source,
             "add_child": add_child, "sub_layers": sub_layers, "add_mask": add_mask,
+            "get_parent": get_parent, "get_next_sibling": get_next_sibling,
+            "get_previous_sibling": get_previous_sibling,
         }
         return type(class_name, (), ns)
 
@@ -253,6 +280,20 @@ def _make_sp_mock():
     layerstack.insert_smart_mask = lambda pos, rid: [MockNode("MaskEffect")]
     layerstack.delete_node = delete_node
     layerstack.move_node = move_node
+
+    def _get_node_by_uid(uid):
+        """递归搜索所有节点（根 + 子节点）。"""
+        def _search(nodes):
+            for n in nodes:
+                if n.uid() == uid:
+                    return n
+                if type(n).__name__ == "GroupLayerNode":
+                    found = _search(n.sub_layers())
+                    if found is not None:
+                        return found
+            return None
+        return _search(list(_root_nodes))
+    layerstack.get_node_by_uid = _get_node_by_uid
 
     class MockScopedModification:
         """Mock ScopedModification — 记录 enter/exit 状态。"""
@@ -414,6 +455,13 @@ def _make_sp_mock():
     project_mod.is_open = lambda: True
     project_mod.is_busy = lambda: False
     project_mod.save = lambda: None
+
+    class MockBoundingBox:
+        def __init__(self):
+            self.center = [0.0, 0.0, 0.0]
+            self.dimensions = [10.0, 10.0, 10.0]
+            self.radius = 8.66
+    project_mod.get_scene_bounding_box = lambda: MockBoundingBox()
 
     # ── substance_painter.export ──
     export = types.ModuleType("substance_painter.export")

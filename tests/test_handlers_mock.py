@@ -618,30 +618,55 @@ class TestDuplicateLayer:
 # ── Phase 7: move_layer ──────────────────────────────────────────────────────
 
 class TestMoveLayer:
-    def test_raises_not_implemented(self, fresh_layer_stack):
+    def test_move_above(self, fresh_layer_stack):
         stack = handlers.get_layer_stack()
-        with pytest.raises(NotImplementedError):
-            handlers.move_layer(stack[-1]["id"], stack[0]["id"], "above")
+        # Move last layer above the first one
+        result = handlers.move_layer(stack[-1]["id"], stack[0]["id"], "above")
+        assert result["ok"] is True
+        new_stack = handlers.get_layer_stack()
+        assert new_stack[0]["name"] == stack[-1]["name"]
 
+    def test_move_below(self, fresh_layer_stack):
+        stack = handlers.get_layer_stack()
+        result = handlers.move_layer(stack[0]["id"], stack[-1]["id"], "below")
+        assert result["ok"] is True
 
-# ── Phase 7: group_layers ────────────────────────────────────────────────────
+    def test_move_to_self(self, fresh_layer_stack):
+        stack = handlers.get_layer_stack()
+        result = handlers.move_layer(stack[0]["id"], stack[0]["id"], "above")
+        assert result["ok"] is True
+
+    def test_invalid_layer(self, fresh_layer_stack):
+        with pytest.raises(ValueError):
+            handlers.move_layer("999999", "1", "above")
+
 
 class TestGroupLayers:
-    def test_raises_not_implemented(self, fresh_layer_stack):
+    def test_groups_layers(self, fresh_layer_stack):
         stack = handlers.get_layer_stack()
-        ids = [n["id"] for n in stack]
-        with pytest.raises(NotImplementedError):
-            handlers.group_layers(ids)
+        fill_ids = [n["id"] for n in stack if n["type"] == "FillLayerNode"][:2]
+        result = handlers.group_layers(fill_ids)
+        assert result["ok"] is True
+        assert "Group" in result["name"]
 
+    def test_empty_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError):
+            handlers.group_layers(["999999"])
 
-# ── Phase 7: ungroup_layer ───────────────────────────────────────────────────
 
 class TestUngroupLayer:
-    def test_raises_not_implemented(self, fresh_layer_stack):
+    def test_ungroup_layer(self, fresh_layer_stack):
         stack = handlers.get_layer_stack()
         group = [n for n in stack if n["type"] == "GroupLayerNode"][0]
-        with pytest.raises(NotImplementedError):
-            handlers.ungroup_layer(group["id"])
+        original_count = len(stack)
+        result = handlers.ungroup_layer(group["id"])
+        assert result["ok"] is True
+
+    def test_ungroup_non_group_raises(self, fresh_layer_stack):
+        stack = handlers.get_layer_stack()
+        fill = [n for n in stack if n["type"] == "FillLayerNode"][0]
+        with pytest.raises(ValueError, match="not a group"):
+            handlers.ungroup_layer(fill["id"])
 
 
 # ── Phase 7: set_active_texture_set ──────────────────────────────────────────
@@ -716,9 +741,9 @@ class TestSetCamera:
 
 
 class TestFrameMesh:
-    def test_raises_not_implemented(self, fresh_layer_stack):
-        with pytest.raises(NotImplementedError):
-            handlers.frame_mesh()
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.frame_mesh()
+        assert result["ok"] is True
 
 
 # ── Phase 7: set_environment ─────────────────────────────────────────────────
