@@ -57,8 +57,10 @@ LLM / MCP Client
 
 将 `plugin/sp_bridge/` 文件夹复制到：
 ```
-%USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\sp_bridge\
+%USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\
 ```
+
+提示：直接将仓库文件的plugin下的sp_bridge文件夹复制到上述路径即可。
 
 **QML 插件（可选）：**
 
