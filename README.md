@@ -57,10 +57,8 @@ LLM / MCP Client
 
 将 `plugin/sp_bridge/` 文件夹复制到：
 ```
-%USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\
+%USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\sp_bridge\
 ```
-
-提示：直接将仓库文件的plugin下的sp_bridge文件夹复制到上述路径即可。
 
 **QML 插件（可选）：**
 
@@ -131,6 +129,18 @@ mcp_servers:
 ```
 Hermes 会自动发现并以 `mcp_substance_painter_<tool>` 注册所有工具。
 
+**Antigravity CLI:**
+```json
+{
+  "mcpServers": {
+    "substance-painter": {
+      "command": "<Python路径>",
+      "args": ["<仓库绝对路径>/server/sp_mcp.py"]
+    }
+  }
+}
+```
+
 ### 4. 启动使用
 
 ```
@@ -171,6 +181,9 @@ Hermes 会自动发现并以 `mcp_substance_painter_<tool>` 注册所有工具�
 | `sp_set_layer_channel(layer_id, channel, value)` | 设定通道值（Roughness/Metallic/Height/BaseColor） |
 | `sp_delete_layer(layer_id)` | 删除图层 |
 | `sp_duplicate_layer(layer_id)` | 复制图层 |
+| `sp_move_layer(layer_id, target_id, pos)` | 移动图层到目标上方/下方 |
+| `sp_group_layers(layer_ids)` | 打包图层进新分组 |
+| `sp_ungroup_layer(layer_id)` | 解散分组，子层提升到父级 |
 
 ### Undo / Redo
 
@@ -206,6 +219,7 @@ Hermes 会自动发现并以 `mcp_substance_painter_<tool>` 注册所有工具�
 |------|------|
 | `sp_capture_viewport(mode)` | 截取 viewport（`"quick"` 迭代 / `"render"` Iray） |
 | `sp_set_camera(x,y,z, tx,ty,tz, fov)` | 设置相机位置和视角 |
+| `sp_frame_mesh()` | 自动适配视图到模型 |
 | `sp_set_environment(preset)` | 切换 HDRI 环境光 |
 
 ### Iray 渲染
