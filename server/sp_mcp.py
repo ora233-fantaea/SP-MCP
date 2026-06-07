@@ -677,7 +677,7 @@ def main() -> None:
     if args.transport == "sse":
         mcp.run(transport="sse", port=args.port)
     else:
-        mcp.run(transport="stdio", show_banner=False)
+        mcp.run(transport="stdio")
 
 
 if __name__ == "__main__":
