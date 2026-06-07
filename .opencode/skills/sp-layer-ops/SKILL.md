@@ -9,6 +9,22 @@ description: 调用 MCP tools 操作 Substance Painter 图层栈，包括新建�
 
 操作 Substance Painter 图层栈的 MCP tools 参考（38 tools）。
 
+## ⚠️ 核心原则：先读后改
+
+**任何操作前，必须先调用读取 tools 确认当前状态，不要假设或直接重置。**
+
+| 操作前必读 | 说明 |
+|---|---|
+| `sp_get_texture_sets()` | 确认当前有哪些纹理集，选对目标 |
+| `sp_get_layer_stack()` | 确认当前图层结构，找到正确的 layer_id |
+| `sp_get_layer_channels(layer_id)` | 修改通道前，先看当前值 |
+| `sp_get_layer_properties(layer_id)` | 修改属性前，先看当前值 |
+
+**错误示范：** 直接 `sp_add_fill_layer` + `sp_apply_material` → 可能加到错误的纹理集/位置
+**正确示范：** `sp_get_texture_sets` → `sp_set_active_texture_set` → `sp_get_layer_stack` → 确认 layer_id → 再操作
+
+---
+
 ## API 速查表
 
 ### SP 10.x 关键事实
