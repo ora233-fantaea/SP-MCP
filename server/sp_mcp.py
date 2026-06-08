@@ -659,6 +659,11 @@ def sp_remove_texture_set_channel(texture_set_name: str, channel_id: str) -> dic
 # ── 入口 ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # 安全 PID 锁：启动前自动清理上一个 sp_mcp.py 僵尸进程
+    # 双重校验（PID + 命令行含 sp_mcp.py），绝不误杀
+    from server.pidlock import acquire_pid_lock
+    acquire_pid_lock()
+
     parser = argparse.ArgumentParser(description="SP MCP Server")
     parser.add_argument(
         "--transport",
@@ -674,10 +679,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.transport == "sse":
-        mcp.run(transport="sse", port=args.port)
-    else:
-        mcp.run(transport="stdio")
+    try:
+        if args.transport == "sse":
+            mcp.run(transport="sse", port=args.port)
+        else:
+            mcp.run(transport="stdio")
+    finally:
+        # 确保退出时清理 PID 文件（mcp.run 可能触发 atexit，最终兜底）
+        from server.pidlock import _cleanup_pid_file
+        _cleanup_pid_file()
 
 
 if __name__ == "__main__":
