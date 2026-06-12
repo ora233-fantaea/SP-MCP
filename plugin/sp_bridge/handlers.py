@@ -821,6 +821,274 @@ def remove_texture_set_channel(texture_set_name: str, channel_id: str) -> dict:
     return {"ok": True, "channel": channel_id}
 
 
+# ── Computer Use ───────────────────────────────────────────────────────────────
+
+def window_info() -> dict:
+    import substance_painter.ui as ui
+    win = ui.get_main_window()
+    geo = win.geometry()
+    from PySide2.QtCore import QPoint
+    origin = win.mapToGlobal(QPoint(0, 0))
+    return {
+        "screen_origin": {"x": origin.x(), "y": origin.y()},
+        "geometry": {"x": geo.x(), "y": geo.y(), "width": geo.width(), "height": geo.height()},
+        "is_minimized": win.isMinimized(),
+        "is_maximized": win.isMaximized(),
+        "is_fullscreen": win.isFullScreen(),
+        "is_visible": win.isVisible(),
+        "is_active": win.isActiveWindow(),
+    }
+
+
+def window_grab(region: dict = None) -> dict:
+    import substance_painter.ui as ui
+    import base64
+    import tempfile
+    import os
+    win = ui.get_main_window()
+    if region and all(k in region for k in ("x", "y", "width", "height")):
+        from PySide2.QtCore import QRect
+        rect = QRect(region["x"], region["y"], region["width"], region["height"])
+        pixmap = win.grab(rect)
+    else:
+        pixmap = win.grab()
+    tmp = tempfile.mktemp(suffix=".png")
+    pixmap.save(tmp, "PNG")
+    with open(tmp, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    os.unlink(tmp)
+    return {"image": b64, "width": pixmap.width(), "height": pixmap.height()}
+
+
+def _get_mouse_pos():
+    import ctypes as ct
+    user32 = ct.windll.user32
+    buf = ct.create_string_buffer(8)
+    user32.GetCursorPos(buf)
+    return (ct.c_long.from_buffer(buf, 0).value, ct.c_long.from_buffer(buf, 4).value)
+
+
+def _set_mouse_pos(x: int, y: int):
+    import ctypes as ct
+    ct.windll.user32.SetCursorPos(x, y)
+
+
+def _mouse_event(flags: int, data: int = 0):
+    import ctypes as ct
+    ct.windll.user32.mouse_event(flags, 0, 0, data, 0)
+
+
+_MOUSEEVENTF_LEFTDOWN = 0x0002
+_MOUSEEVENTF_LEFTUP = 0x0004
+_MOUSEEVENTF_RIGHTDOWN = 0x0008
+_MOUSEEVENTF_RIGHTUP = 0x0010
+_MOUSEEVENTF_MIDDLEDOWN = 0x0020
+_MOUSEEVENTF_MIDDLEUP = 0x0040
+_MOUSEEVENTF_WHEEL = 0x0800
+
+_cu_banner = None
+
+
+def _show_cu_banner():
+    global _cu_banner
+    if _cu_banner is not None:
+        return
+    import substance_painter.ui as ui
+    from PySide2.QtWidgets import QLabel
+    from PySide2.QtCore import Qt
+    win = ui.get_main_window()
+    banner = QLabel(win)
+    banner.setText("MCP Control Active - Do not touch mouse/keyboard")
+    banner.setObjectName("_mcp_cu_banner")
+    banner.setStyleSheet("""
+        QLabel#_mcp_cu_banner {
+            background-color: rgba(220, 50, 50, 230);
+            color: white;
+            font-size: 15px;
+            font-weight: bold;
+            padding: 8px 40px;
+            border-radius: 4px;
+        }
+    """)
+    banner.setAlignment(Qt.AlignCenter)
+    banner.adjustSize()
+    bw = banner.width()
+    banner.move((win.width() - bw) // 2, 5)
+    banner.raise_()
+    banner.show()
+    _cu_banner = banner
+
+
+def _hide_cu_banner():
+    global _cu_banner
+    if _cu_banner is None:
+        return
+    _cu_banner.hide()
+    _cu_banner.deleteLater()
+    _cu_banner = None
+
+
+def window_focus() -> dict:
+    import time
+    import ctypes as ct
+    import substance_painter.ui as ui
+
+    _show_cu_banner()
+
+    win = ui.get_main_window()
+
+    if win.isMinimized():
+        win.showNormal()
+
+    win.raise_()
+    win.activateWindow()
+
+    hwnd = int(win.winId())
+    ct.windll.user32.SetForegroundWindow(hwnd)
+
+    time.sleep(0.05)
+
+    return {
+        "focused": win.isActiveWindow(),
+        "is_minimized": win.isMinimized(),
+        "hwnd": hwnd,
+    }
+
+
+def cu_unlock() -> dict:
+    _hide_cu_banner()
+    return {"ok": True}
+
+
+def mouse_move(x: int, y: int, relative: str = "screen") -> dict:
+    pos_before = _get_mouse_pos()
+    if relative == "window":
+        info = window_info()
+        x += info["screen_origin"]["x"]
+        y += info["screen_origin"]["y"]
+    _set_mouse_pos(x, y)
+    import time
+    time.sleep(0.01)
+    pos_after = _get_mouse_pos()
+    return {"moved": (pos_before != pos_after), "x": pos_after[0], "y": pos_after[1]}
+
+
+def mouse_click(
+    x: int = None, y: int = None,
+    button: str = "left", clicks: int = 1,
+    relative: str = "screen"
+) -> dict:
+    import time
+    if x is not None and y is not None:
+        mouse_move(x, y, relative)
+        time.sleep(0.02)
+    flags_map = {
+        "left": (_MOUSEEVENTF_LEFTDOWN, _MOUSEEVENTF_LEFTUP),
+        "right": (_MOUSEEVENTF_RIGHTDOWN, _MOUSEEVENTF_RIGHTUP),
+        "middle": (_MOUSEEVENTF_MIDDLEDOWN, _MOUSEEVENTF_MIDDLEUP),
+    }
+    if button not in flags_map:
+        raise ValueError(f"Unknown button: {button}. Use left/right/middle.")
+    down, up = flags_map[button]
+    for _ in range(clicks):
+        _mouse_event(down)
+        time.sleep(0.01)
+        _mouse_event(up)
+        time.sleep(0.01)
+    pos = _get_mouse_pos()
+    return {"clicked": True, "button": button, "clicks": clicks, "x": pos[0], "y": pos[1]}
+
+
+def mouse_scroll(amount: int) -> dict:
+    _mouse_event(_MOUSEEVENTF_WHEEL, amount)
+    return {"scrolled": True, "amount": amount}
+
+
+def mouse_drag(
+    x1: int, y1: int, x2: int, y2: int,
+    button: str = "left", relative: str = "screen"
+) -> dict:
+    import time
+    flags_map = {
+        "left": (_MOUSEEVENTF_LEFTDOWN, _MOUSEEVENTF_LEFTUP),
+        "right": (_MOUSEEVENTF_RIGHTDOWN, _MOUSEEVENTF_RIGHTUP),
+        "middle": (_MOUSEEVENTF_MIDDLEDOWN, _MOUSEEVENTF_MIDDLEUP),
+    }
+    if button not in flags_map:
+        raise ValueError(f"Unknown button: {button}")
+    down, up = flags_map[button]
+
+    mouse_move(x1, y1, relative)
+    time.sleep(0.02)
+    _mouse_event(down)
+    time.sleep(0.02)
+    mouse_move(x2, y2, relative)
+    time.sleep(0.05)
+    _mouse_event(up)
+    time.sleep(0.02)
+    pos = _get_mouse_pos()
+    return {"dragged": (x1, y1, x2, y2), "button": button, "end_x": pos[0], "end_y": pos[1]}
+
+
+def _key_event(vk: int, up: bool = False):
+    import ctypes as ct
+    KEYEVENTF_KEYUP = 0x0002
+    ct.windll.user32.keybd_event(vk, 0, KEYEVENTF_KEYUP if up else 0, 0)
+
+
+_VK_MAP = {
+    "enter": 0x0D, "return": 0x0D,
+    "tab": 0x09,
+    "escape": 0x1B, "esc": 0x1B,
+    "space": 0x20,
+    "backspace": 0x08,
+    "delete": 0x2E, "del": 0x2E,
+    "insert": 0x2D, "ins": 0x2D,
+    "home": 0x24,
+    "end": 0x23,
+    "pageup": 0x21, "page_down": 0x22,
+    "left": 0x25, "right": 0x27, "up": 0x26, "down": 0x28,
+    "shift": 0x10, "ctrl": 0x11, "control": 0x11,
+    "alt": 0x12, "menu": 0x12,
+    "f1": 0x70, "f2": 0x71, "f3": 0x72, "f4": 0x73,
+    "f5": 0x74, "f6": 0x75, "f7": 0x76, "f8": 0x77,
+    "f9": 0x78, "f10": 0x79, "f11": 0x7A, "f12": 0x7B,
+}
+
+
+def key_send(keys: str, modifiers: list = None) -> dict:
+    import time
+    if modifiers:
+        for mod in modifiers:
+            vk = _VK_MAP.get(mod.lower())
+            if vk:
+                _key_event(vk)
+                time.sleep(0.02)
+
+    sent = []
+    for ch in keys:
+        vk = _VK_MAP.get(ch.lower())
+        if vk is None and len(ch) == 1:
+            import ctypes as ct
+            vk = ct.windll.user32.VkKeyScanW(ord(ch)) & 0xFF
+        if vk:
+            _key_event(vk)
+            time.sleep(0.01)
+            _key_event(vk, up=True)
+            time.sleep(0.01)
+            sent.append(ch)
+
+    if modifiers:
+        time.sleep(0.02)
+        for mod in reversed(modifiers):
+            vk = _VK_MAP.get(mod.lower())
+            if vk:
+                _key_event(vk, up=True)
+                time.sleep(0.02)
+
+    return {"sent": "".join(sent), "modifiers": modifiers or []}
+
+
 # ── 内部工具 ──────────────────────────────────────────────────────────────────
 
 def _serialize_nodes(nodes: list) -> list:
@@ -1087,4 +1355,14 @@ _REGISTRY: dict = {
     "bake_mesh_maps":           bake_mesh_maps,
     "add_texture_set_channel":  add_texture_set_channel,
     "remove_texture_set_channel": remove_texture_set_channel,
+    # Phase 14 — Computer Use
+    "window_info":              window_info,
+    "window_grab":              window_grab,
+    "window_focus":             window_focus,
+    "cu_unlock":                cu_unlock,
+    "mouse_move":               mouse_move,
+    "mouse_click":              mouse_click,
+    "mouse_scroll":             mouse_scroll,
+    "mouse_drag":               mouse_drag,
+    "key_send":                 key_send,
 }

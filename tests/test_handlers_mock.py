@@ -853,3 +853,161 @@ class TestRemoveTextureSetChannel:
     def test_empty_channel_id_raises(self, fresh_layer_stack):
         with pytest.raises(ValueError, match="must not be empty"):
             handlers.remove_texture_set_channel("Default", "")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 14 — Computer Use
+
+
+class TestWindowInfo:
+    def test_returns_dict(self, fresh_layer_stack):
+        result = handlers.window_info()
+        assert isinstance(result, dict)
+        assert "screen_origin" in result
+        assert "geometry" in result
+        assert result["geometry"]["width"] == 1920
+        assert result["geometry"]["height"] == 1017
+        assert "is_minimized" in result
+        assert "is_maximized" in result
+        assert "is_fullscreen" in result
+        assert "is_visible" in result
+        assert "is_active" in result
+
+    def test_screen_origin(self, fresh_layer_stack):
+        result = handlers.window_info()
+        assert "x" in result["screen_origin"]
+        assert "y" in result["screen_origin"]
+
+
+class TestWindowGrab:
+    def test_full_grab_returns_base64(self, fresh_layer_stack):
+        result = handlers.window_grab()
+        assert "image" in result
+        assert len(result["image"]) > 0
+        assert result["width"] > 0
+        assert result["height"] > 0
+
+    def test_region_grab(self, fresh_layer_stack):
+        result = handlers.window_grab({"x": 0, "y": 0, "width": 400, "height": 300})
+        assert "image" in result
+        assert result["width"] == 400
+        assert result["height"] == 300
+
+
+class TestWindowFocus:
+    def test_focus_returns_dict(self, fresh_layer_stack):
+        result = handlers.window_focus()
+        assert isinstance(result, dict)
+        assert result["focused"] is True
+        assert result["is_minimized"] is False
+        assert result["hwnd"] == 12345
+        assert handlers._cu_banner is not None
+
+    def test_focus_from_minimized(self, fresh_layer_stack):
+        import substance_painter.ui as ui
+        win = ui.get_main_window()
+        win._minimized = True
+        win._active = False
+        result = handlers.window_focus()
+        assert result["focused"] is True
+        assert result["is_minimized"] is False
+        assert result["hwnd"] == 12345
+        assert handlers._cu_banner is not None
+
+    def test_cu_unlock_hides_banner(self, fresh_layer_stack):
+        handlers.window_focus()
+        assert handlers._cu_banner is not None
+        result = handlers.cu_unlock()
+        assert result == {"ok": True}
+        assert handlers._cu_banner is None
+
+    def test_cu_unlock_idempotent(self, fresh_layer_stack):
+        result = handlers.cu_unlock()
+        assert result == {"ok": True}
+        assert handlers._cu_banner is None
+
+
+class TestMouseMove:
+    def test_move_screen_coords(self, fresh_layer_stack):
+        result = handlers.mouse_move(100, 200)
+        assert result["moved"] is True
+        assert result["x"] == 100
+        assert result["y"] == 200
+
+    def test_move_window_relative(self, fresh_layer_stack):
+        result = handlers.mouse_move(50, 60, relative="window")
+        assert result["moved"] is True
+        # window origin is (0, 23) in mock, so screen coords are (50, 83)
+        assert result["x"] == 50
+        assert result["y"] == 83
+
+
+class TestMouseClick:
+    def test_left_click(self, fresh_layer_stack):
+        result = handlers.mouse_click(100, 200, button="left")
+        assert result["clicked"] is True
+        assert result["button"] == "left"
+        assert result["clicks"] == 1
+
+    def test_right_click(self, fresh_layer_stack):
+        result = handlers.mouse_click(button="right")
+        assert result["clicked"] is True
+        assert result["button"] == "right"
+
+    def test_double_click(self, fresh_layer_stack):
+        result = handlers.mouse_click(button="left", clicks=2)
+        assert result["clicked"] is True
+        assert result["clicks"] == 2
+
+    def test_unknown_button_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="Unknown button"):
+            handlers.mouse_click(button="bad")
+
+
+class TestMouseScroll:
+    def test_scroll_up(self, fresh_layer_stack):
+        result = handlers.mouse_scroll(120)
+        assert result["scrolled"] is True
+        assert result["amount"] == 120
+
+    def test_scroll_down(self, fresh_layer_stack):
+        result = handlers.mouse_scroll(-120)
+        assert result["scrolled"] is True
+        assert result["amount"] == -120
+
+
+class TestMouseDrag:
+    def test_left_drag(self, fresh_layer_stack):
+        result = handlers.mouse_drag(100, 200, 300, 400, button="left")
+        assert result["dragged"] == (100, 200, 300, 400)
+        assert result["button"] == "left"
+
+    def test_right_drag(self, fresh_layer_stack):
+        result = handlers.mouse_drag(10, 20, 50, 80, button="right")
+        assert result["dragged"] == (10, 20, 50, 80)
+        assert result["button"] == "right"
+
+    def test_unknown_button_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="Unknown button"):
+            handlers.mouse_drag(0, 0, 10, 10, button="bad")
+
+
+class TestKeySend:
+    def test_send_enter(self, fresh_layer_stack):
+        result = handlers.key_send("enter")
+        assert result["sent"] == "enter"
+        assert result["modifiers"] == []
+
+    def test_send_text(self, fresh_layer_stack):
+        result = handlers.key_send("Hello")
+        assert result["sent"] == "Hello"
+
+    def test_send_combo(self, fresh_layer_stack):
+        result = handlers.key_send("a", modifiers=["ctrl"])
+        assert result["sent"] == "a"
+        assert result["modifiers"] == ["ctrl"]
+
+    def test_send_multi_modifiers(self, fresh_layer_stack):
+        result = handlers.key_send("z", modifiers=["ctrl", "shift"])
+        assert result["sent"] == "z"
+        assert result["modifiers"] == ["ctrl", "shift"]

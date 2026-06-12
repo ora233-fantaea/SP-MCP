@@ -50,7 +50,7 @@ Phase 2 探索发现以下与文档/预期不符的实际 API，所有代码必�
 | `substance_painter.js` | JS API 入口，`js.evaluate("alg.xxx")` 调用 |
 | Baking 用 Python API | 不存在，用 `js.evaluate("alg.baking.bake(name)")` |
 | Texture Set 通道管理 | Python API 不完整，用 `js.evaluate("alg.texturesets.addChannel(...)")` |
-| `alg.ui.clickButton` | 存在但有 `findChild` 错误，暂不可用 |
+| `alg.ui.clickButton` | 存在但有 `findChild` 错误（2026-06 现场复测确认 SP 10.0.1 bug），用 Computer Use 鼠标点击替代 |
 
 ---
 
@@ -271,6 +271,48 @@ sp_end_batch()
 import substance_painter.js as js
 result = js.evaluate("alg.baking.bake('textureSetName')")
 # 返回值是 JSON 字符串，需要 json.loads() 解析
+```
+
+### Phase 14 — Computer Use
+
+通过 Windows API（`ctypes.windll.user32`）实现 mini Computer Use，供 LLM 视觉模型驱动 SP UI。
+
+**`sp_window_info()`** — 返回窗口位置/尺寸/状态，配合截图做坐标映射。
+
+**`sp_window_grab(region?)`** — 截取 SP 完整窗口或指定区域，返回 base64 PNG。
+region 格式：`{"x": 0, "y": 0, "width": 400, "height": 300}`（相对窗口左上角）。
+
+**`sp_window_focus()`** — 将 SP 窗口置于前台，获取焦点，并显示红色警示条。
+返回 `{"focused": bool, "is_minimized": bool, "hwnd": int}`。
+调用后 SP 窗口顶部会显示 "MCP Control Active" 半透明警示覆盖层。
+
+**`sp_cu_unlock()`** — 解除 Computer Use 锁定，隐藏警示条。
+操作结束后必须调用，确保警示条消失。
+
+**`sp_mouse_move(x, y, relative?)`** — 移动鼠标。
+relative：`"screen"`（屏幕绝对坐标，默认）或 `"window"`（相对 SP 窗口左上角）。
+
+**`sp_mouse_click(x?, y?, button?, clicks?, relative?)`** — 鼠标点击。
+button：`"left"` / `"right"` / `"middle"`。clicks：1=单击, 2=双击。
+不传 x/y 则在当前位置点击。
+
+**`sp_mouse_scroll(amount)`** — 滚轮。
+正值=向上滚，负值=向下滚。Windows 标准单位 ±120。
+
+**`sp_mouse_drag(x1, y1, x2, y2, button?, relative?)`** — 拖拽从 (x1,y1) 到 (x2,y2)。
+
+**`sp_key_send(keys, modifiers?)`** — 发送键盘输入。
+keys：文本字符串或键名。modifiers：`["ctrl"]`, `["ctrl","shift"]` 等。
+支持键名：enter, tab, esc, space, backspace, delete, home, end, pageup, pagedown, left, right, up, down, f1-f12, ctrl, shift, alt。
+
+**使用示例：**
+```
+sp_window_focus()                          → 聚焦 SP + 显示警示条
+sp_window_grab()                           → 截整窗口发给 LLM 分析
+sp_mouse_click(400, 300, "left")           → 在窗口坐标 (400,300) 左键点击
+sp_key_send("a", ["ctrl"])                 → Ctrl+A 全选
+sp_key_send("hello")                       → 逐键打出 "hello"
+sp_cu_unlock()                             → 操作完毕，隐藏警示条
 ```
 
 ---

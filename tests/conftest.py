@@ -543,6 +543,36 @@ def _make_sp_mock():
     resource.search = resource_search
     resource.ResourceID = MockResourceID
 
+    # ── Mock ctypes.windll.user32 (for Computer Use) ──
+    import ctypes as _real_ctypes
+    _ctypes_state = {"pos": (500, 400), "fg_hwnd": None}
+
+    class _MockUser32:
+        @staticmethod
+        def GetCursorPos(buf):
+            import struct
+            struct.pack_into("ll", buf, 0, _ctypes_state["pos"][0], _ctypes_state["pos"][1])
+        @staticmethod
+        def SetCursorPos(x, y):
+            _ctypes_state["pos"] = (x, y)
+        @staticmethod
+        def mouse_event(flags, x, y, data, extra):
+            pass
+        @staticmethod
+        def keybd_event(vk, scan, flags, extra):
+            pass
+        @staticmethod
+        def GetSystemMetrics(idx):
+            return {0: 1920, 1: 1080}.get(idx, 0)
+        @staticmethod
+        def VkKeyScanW(ch):
+            return ch
+        @staticmethod
+        def SetForegroundWindow(hwnd):
+            _ctypes_state["fg_hwnd"] = hwnd
+
+    _real_ctypes.windll.user32 = _MockUser32()
+
     # ── PySide2 mock ──
     pyside2 = types.ModuleType("PySide2")
     pyside2_core = types.ModuleType("PySide2.QtCore")
@@ -565,6 +595,28 @@ def _make_sp_mock():
     pyside2_core.QTimer = _FakeQTimer
     pyside2.QtCore = pyside2_core
 
+    # QPoint mock
+    class _MockQPoint:
+        def __init__(self, x, y): self._x = x; self._y = y
+        def x(self): return self._x
+        def y(self): return self._y
+    pyside2_core.QPoint = _MockQPoint
+
+    # QRect mock
+    class _MockQRect:
+        def __init__(self, *args):
+            if len(args) == 4:
+                self._x, self._y, self._w, self._h = args
+            else:
+                self._x = self._y = self._w = self._h = 0
+        def x(self): return self._x
+        def y(self): return self._y
+        def width(self): return self._w
+        def height(self): return self._h
+        def adjusted(self, a, b, c, d):
+            return _MockQRect(self._x + a, self._y + b, self._w - a - c, self._h - b - d)
+    pyside2_core.QRect = _MockQRect
+
     # QBuffer / QIODevice mock for viewport capture
     class _FakeBuffer:
         def __init__(self): self._data = b""
@@ -573,6 +625,12 @@ def _make_sp_mock():
         def data(self): return self._data
     pyside2_core.QBuffer = _FakeBuffer
     pyside2_core.QIODevice = type('QIODevice', (), {'WriteOnly': 0})
+    pyside2_core.Qt = type('Qt', (), {
+        'AlignCenter': 0x0084,
+        'ToolTip': 0x0000000D,
+        'FramelessWindowHint': 0x00000800,
+        'WindowStaysOnTopHint': 0x00040000,
+    })
 
     pyside2_widgets = types.ModuleType("PySide2.QtWidgets")
 
@@ -586,6 +644,12 @@ def _make_sp_mock():
             if parent and hasattr(parent, '_children'):
                 parent._children.append(self)
         def objectName(self): return self._name
+        def setObjectName(self, n): self._name = n
+        def width(self): return getattr(self, '_w', 0) or getattr(self, '_geo_w', 100)
+        def height(self): return getattr(self, '_h', 0) or getattr(self, '_geo_h', 30)
+        def show(self): pass
+        def hide(self): pass
+        def move(self, x, y): pass
         def text(self): return self._text
         def setParent(self, p):
             if self._parent and self in self._parent._children:
@@ -657,6 +721,75 @@ def _make_sp_mock():
     class _MockQMainWindow(_MockWidget):
         def __init__(self):
             super().__init__("S4MainWindow")
+            self._geo_x = 0
+            self._geo_y = 23
+            self._geo_w = 1920
+            self._geo_h = 1017
+            self._minimized = False
+            self._maximized = True
+            self._fullscreen = False
+            self._visible = True
+            self._active = True
+            self._win_title = "Adobe Substance 3D Painter"
+        def geometry(self):
+            class _QRect:
+                def __init__(self): pass
+                def x(self): return self._x
+                def y(self): return self._y
+                def width(self): return self._w
+                def height(self): return self._h
+                def adjusted(self, a, b, c, d):
+                    r2 = _QRect()
+                    r2._x = self._x + a; r2._y = self._y + b
+                    r2._w = self._w - a - c; r2._h = self._h - b - d
+                    return r2
+            r = _QRect()
+            r._x = self._geo_x; r._y = self._geo_y
+            r._w = self._geo_w; r._h = self._geo_h
+            return r
+        def width(self): return self._geo_w
+        def height(self): return self._geo_h
+        def x(self): return self._geo_x
+        def y(self): return self._geo_y
+        def isMinimized(self): return self._minimized
+        def isMaximized(self): return self._maximized
+        def isFullScreen(self): return self._fullscreen
+        def isVisible(self): return self._visible
+        def isActiveWindow(self): return self._active
+        def windowTitle(self): return self._win_title
+        def setWindowTitle(self, t): self._win_title = t
+        def mapToGlobal(self, qpoint):
+            qx = qpoint.x() if hasattr(qpoint, 'x') else 0
+            qy = qpoint.y() if hasattr(qpoint, 'y') else 0
+            class _Pt:
+                def __init__(self, x, y): self._x, self._y = x, y
+                def x(self): return self._x
+                def y(self): return self._y
+            return _Pt(qx + self._geo_x, qy + self._geo_y)
+        def grab(self, rect=None):
+            class _FakePixmap:
+                def __init__(self, w, h):
+                    self._w = w; self._h = h
+                def width(self): return self._w
+                def height(self): return self._h
+                def save(self, path, fmt):
+                    with open(path, 'wb') as f:
+                        f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+            if rect and hasattr(rect, '_w'):
+                return _FakePixmap(rect._w, rect._h)
+            return _FakePixmap(self._geo_w, self._geo_h)
+        def showMinimized(self): self._minimized = True; self._maximized = False
+        def showMaximized(self): self._minimized = False; self._maximized = True
+        def showFullScreen(self): self._fullscreen = True
+        def showNormal(self): self._minimized = False; self._maximized = False; self._fullscreen = False
+        def hide(self): self._visible = False
+        def show(self): self._visible = True
+        def activateWindow(self): self._active = True
+        def raise_(self): pass
+        def winId(self): return 12345
+        def lower(self): pass
+        def resize(self, w, h): self._geo_w = w; self._geo_h = h
+        def move(self, x, y): self._geo_x = x; self._geo_y = y
         def menuBar(self): return _MockWidget("menubar", self)
 
     pyside2_widgets.QWidget = _MockWidget
@@ -666,6 +799,21 @@ def _make_sp_mock():
     pyside2_widgets.QAction = _MockQAction
     pyside2_widgets.QDockWidget = _MockQDockWidget
     pyside2_widgets.QMainWindow = _MockQMainWindow
+
+    class _MockQLabel(_MockWidget):
+        def __init__(self, text="", parent=None):
+            if parent is None and isinstance(text, _MockWidget):
+                parent, text = text, ""
+            super().__init__("QLabel", parent)
+            self._text = text
+        def setText(self, t): self._text = t
+        def text(self): return self._text
+        def setAlignment(self, a): pass
+        def adjustSize(self): pass
+        def raise_(self): pass
+        def deleteLater(self): pass
+        def setStyleSheet(self, s): pass
+    pyside2_widgets.QLabel = _MockQLabel
     pyside2.QtWidgets = pyside2_widgets
 
     # QOpenGLWidget mock — used by handlers via PySide2.QtWidgets
@@ -819,6 +967,9 @@ def fresh_layer_stack():
             stack._can_undo = False
             stack._can_redo = False
             stack._count = 0
+    # Reset CU banner state
+    from plugin.sp_bridge import handlers as _h
+    _h._cu_banner = None
     yield ls._root_nodes
 
 

@@ -46,6 +46,7 @@
 | Phase 11 | 外置 Undo/Redo 栈 | ✅ 已删除（改用 SP 原生 undo/redo） |
 | Phase 12 | 自动 batch + 文件重构 | ✅ 完成 |
 | Phase 13 | 四功能复现（move/group/ungroup/frame） | ✅ 完成 |
+| Phase 14 | Computer Use（窗口截图 + 鼠标/键盘控制） | ✅ 完成 |
 
 ---
 
@@ -779,6 +780,65 @@ plugin/                →  plugin/
 - `_copy_channels(src, dst)` — 复制所有 5 个通道的 opacity/blend/source
 
 **验收：** 187 测试全绿，4 个功能 live 验证通过。
+
+---
+
+## Phase 14 — Computer Use
+
+**状态：** ✅ 完成
+
+**目标：** 实现 mini Computer Use 能力——截取 SP 完整窗口界面、控制鼠标和键盘，供 LLM 视觉模型驱动 SP UI。
+
+### 发现的 API/能力
+
+| 能力 | 实现方式 |
+|------|---------|
+| 全窗口截图 | `main_window.grab()` → QPixmap → PNG → base64 |
+| 区域截图 | `main_window.grab(QRect)` |
+| 窗口信息 | `main_window.geometry()` / `mapToGlobal()` / `isMinimized()` 等 |
+| 鼠标移动 | `ctypes.windll.user32.SetCursorPos(x, y)` |
+| 左/右/中/双击 | `ctypes.windll.user32.mouse_event(MOUSEEVENTF_*)` |
+| 拖拽 | `SetCursorPos` + `mouse_event(LDOWN)` + `SetCursorPos` + `mouse_event(LUP)` |
+| 滚轮 | `mouse_event(MOUSEEVENTF_WHEEL, delta)` |
+| 键盘 | `ctypes.windll.user32.keybd_event(vk, 0, ...)` |
+| 组合键 | keybd_event 按下修饰键 → 发送按键 → 释放修饰键 |
+| 等待 | `time.sleep()` |
+
+### 实现的新 MCP Tools（7 个）
+
+| Tool | 参数 | 功能 |
+|------|------|------|
+| `sp_window_info` | 无 | 返回窗口位置/尺寸/状态 |
+| `sp_window_grab` | `region?` | 全窗口/区域截图 → base64 PNG |
+| `sp_window_focus` | 无 | 聚焦 SP 窗口 + 显示红色警示条 |
+| `sp_cu_unlock` | 无 | 解除锁定 + 隐藏警示条 |
+| `sp_mouse_move` | `x, y, relative?` | 移动鼠标（屏幕/窗口坐标） |
+| `sp_mouse_click` | `x?, y?, button?, clicks?, relative?` | 点击（左/右/中，单击/双击） |
+| `sp_mouse_scroll` | `amount` | 滚轮（正值=上，负值=下） |
+| `sp_mouse_drag` | `x1, y1, x2, y2, button?, relative?` | 拖拽 A→B |
+| `sp_key_send` | `keys, modifiers?` | 单键/组合键/打字 |
+
+### 键名支持
+
+导航：enter, tab, esc, space, backspace, delete, home, end, pageup, pagedown, left, right, up, down
+
+修饰：ctrl, shift, alt
+
+功能：f1-f12
+
+普通字符直接传输（如 `"Hello"` → 逐键打出 H-e-l-l-o）
+
+### 已知限制
+
+- `alg.ui.clickButton()` — SP 10.0.1 内部 bug（`findChild of undefined`），不可用，Computer Use 通过鼠标点击绕过了此限制
+- 窗口截图仅限 SP 窗口内，无法截桌面其他区域
+- 激活窗口/置顶可能受 Windows 限制
+
+### 验收
+
+- 9 个 handler + 9 个 MCP tool + 23 个新测试
+- 230 测试全绿（含已有 207）
+- handlers.py 增长 ~250 行，sp_mcp.py 增长 ~140 行
 
 ---
 

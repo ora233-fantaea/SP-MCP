@@ -35,7 +35,7 @@
 ```
 LLM / MCP Client
       ↕  stdio 或 SSE
-  server/sp_mcp.py          MCP Tools 定义（40 个）
+  server/sp_mcp.py          MCP Tools 定义（49 个）
       ↕  HTTP POST localhost:27182
   plugin/sp_bridge/bridge.py           HTTP Server + QTimer 调度
       ↕  QTimer 轮询队列（主线程执行）
@@ -152,7 +152,7 @@ Hermes 会自动发现并以 `mcp_substance_painter_<tool>` 注册所有工具�
 4. 对话中直接使用："帮我看看当前 Painter 的图层结构"
 ```
 
-## 🛠️ MCP Tools（40 个）
+## 🛠️ MCP Tools（49 个）
 
 > 所有图层修改操作（`add_fill_layer`、`set_layer_channel`、`apply_smart_material` 等）自动包裹 `ScopedModification`，**每个 API 调用 = 1 条 undo**。
 > 用 `begin_batch` / `end_batch` 可将多个操作再合并为 1 条。
@@ -252,12 +252,31 @@ Hermes 会自动发现并以 `mcp_substance_painter_<tool>` 注册所有工具�
 |------|------|
 | `sp_run_python(code)` | 在主线程执行任意 Python |
 
+### Computer Use
+
+> 通过 Windows API 实现 mini Computer Use，供视觉模型通过截图→坐标映射→鼠标点击/键盘输入驱动 SP UI。
+> `sp_window_focus()` 会在 SP 窗口顶部显示红色 "MCP Control Active" 警示条，操作结束后用 `sp_cu_unlock()` 清除。
+
+| Tool | 说明 |
+|------|------|
+| `sp_window_info()` | 返回窗口位置/尺寸/状态，配合截图做坐标映射 |
+| `sp_window_grab(region?)` | 截取 SP 窗口或指定区域 → base64 PNG |
+| `sp_window_focus()` | 聚焦 SP 窗口 + 显示红色警示条 |
+| `sp_cu_unlock()` | 解除锁定 + 隐藏警示条 |
+| `sp_mouse_move(x, y, relative?)` | 移动鼠标（屏幕/窗口相对坐标） |
+| `sp_mouse_click(x?, y?, button?, clicks?, relative?)` | 点击（左/右/中，单击/双击） |
+| `sp_mouse_scroll(amount)` | 滚轮（±120） |
+| `sp_mouse_drag(x1, y1, x2, y2, button?, relative?)` | 拖拽 A→B |
+| `sp_key_send(keys, modifiers?)` | 键盘输入（单键/组合键/打字） |
+
 ## ⚠️ 已知限制
 
 - `sp_capture_viewport` 需要项目打开且 3D viewport 可见
 - Smart Material API 需要 SP 10.0+，9.x 上相关 tool 返回明确错误
 - Layer id 在 Painter 重启后会变化，不要跨 session 缓存
 - `schedule_on_ui_thread` 在 SP 10.x 不存在，已用 QTimer 轮询方案替代
+- `alg.ui.clickButton` 在 SP 10.0.1 有内部 bug（`findChild` of undefined），Computer Use 通过鼠标点击绕过此限制
+- Computer Use 鼠标/键盘输入受 Windows 前台窗口限制，操作前务必调用 `sp_window_focus()`
 
 ## 🤝 SP2VTF 集成
 
@@ -275,6 +294,7 @@ python sp2vtf/convert.py --input ./export/gun_skin_v1 --output ./vtf/
 | 插件未加载 | 检查 Python Console 输出 |
 | 日志文件 | `%USERPROFILE%\sp_bridge.log` |
 | 热重载 | `import importlib, sp_bridge.handlers; importlib.reload(sp_bridge.handlers)` |
+| CU 警示条不消失 | 调用 `sp_cu_unlock()` 或重启 Painter |
 
 详见 [AGENTS.md](./AGENTS.md) 和 [PHASES.md](./PHASES.md)。
 

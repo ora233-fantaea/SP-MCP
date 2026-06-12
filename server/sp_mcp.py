@@ -656,6 +656,143 @@ def sp_remove_texture_set_channel(texture_set_name: str, channel_id: str) -> dic
     })
 
 
+# ── Computer Use ────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+def sp_window_info() -> dict:
+    """
+    返回 SP 主窗口的位置和尺寸信息，供 Computer Use 类工具做坐标映射。
+
+    返回：screen_origin（窗口左上角屏幕坐标）、geometry（位置+宽高）、窗口状态标志。
+    配合 sp_window_grab 使用，可精确定位截图中的 UI 元素坐标。
+    """
+    return sp.call("window_info")
+
+
+@mcp.tool()
+def sp_window_grab(region: dict = None) -> dict:
+    """
+    截取 SP 窗口完整截图或指定区域，返回 base64 编码的 PNG。
+
+    region（可选）：{"x": 0, "y": 0, "width": 400, "height": 300}，x/y 相对于窗口左上角。
+    不传 region 则截取整个 SP 窗口。
+    返回 {"image": "<base64>", "width": int, "height": int}，
+    可将 image 字段直接传给视觉模型分析窗口内容。
+    """
+    return sp.call("window_grab", {"region": region} if region else {})
+
+
+@mcp.tool()
+def sp_window_focus() -> dict:
+    """
+    将 SP 窗口置于前台并确保获得焦点。
+
+    在发送鼠标点击或键盘操作前调用，确保输入到达正确的窗口。
+    如果窗口已最小化，会先还原。
+
+    返回 {"focused": bool, "is_minimized": bool, "hwnd": int}
+    """
+    return sp.call("window_focus", {})
+
+
+@mcp.tool()
+def sp_cu_unlock() -> dict:
+    """
+    解除 Computer Use 锁定，隐藏警示条。
+
+    Computer Use 操作结束后调用，清除 "MCP Control Active" 警示覆盖层。
+    返回 {"ok": True}
+    """
+    return sp.call("cu_unlock", {})
+
+
+@mcp.tool()
+def sp_mouse_move(x: int, y: int, relative: str = "screen") -> dict:
+    """
+    移动鼠标到指定坐标。
+
+    x/y         目标坐标
+    relative    "screen"（屏幕绝对坐标，默认）或 "window"（相对 SP 窗口左上角）
+    """
+    return sp.call("mouse_move", {"x": x, "y": y, "relative": relative})
+
+
+@mcp.tool()
+def sp_mouse_click(
+    x: int = None, y: int = None,
+    button: str = "left", clicks: int = 1,
+    relative: str = "screen"
+) -> dict:
+    """
+    在指定坐标执行鼠标点击。
+
+    x/y         点击坐标（不传则在当前位置点击）
+    button      "left" / "right" / "middle"
+    clicks      1=单击, 2=双击
+    relative    "screen" 或 "window"
+    """
+    params = {"button": button, "clicks": clicks, "relative": relative}
+    if x is not None:
+        params["x"] = x
+    if y is not None:
+        params["y"] = y
+    return sp.call("mouse_click", params)
+
+
+@mcp.tool()
+def sp_mouse_scroll(amount: int) -> dict:
+    """
+    鼠标滚轮滚动。
+
+    amount  正值=向上滚，负值=向下滚。建议 ±120 为单位（Windows 标准）。
+    """
+    return sp.call("mouse_scroll", {"amount": amount})
+
+
+@mcp.tool()
+def sp_mouse_drag(
+    x1: int, y1: int, x2: int, y2: int,
+    button: str = "left", relative: str = "screen"
+) -> dict:
+    """
+    从 (x1,y1) 拖拽到 (x2,y2)。
+
+    button    "left" / "right" / "middle"
+    relative  "screen" 或 "window"
+    """
+    return sp.call("mouse_drag", {
+        "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+        "button": button, "relative": relative,
+    })
+
+
+@mcp.tool()
+def sp_key_send(keys: str, modifiers: list = None) -> dict:
+    """
+    发送键盘按键到当前焦点窗口。
+
+    keys        要发送的文本（支持组合键名如 "enter", "tab", "f5" 等）
+    modifiers   修饰键列表，如 ["ctrl", "shift"]
+                修饰键会按住→发送 keys→释放修饰键
+
+    常用键名：
+    导航: enter, tab, esc, space, backspace, delete,
+          home, end, pageup, pagedown, left, right, up, down
+    修饰: ctrl, shift, alt
+    功能: f1 - f12
+    普通字符直接用文本，如 "Hello World"
+
+    示例：
+    sp_key_send(keys="a", modifiers=["ctrl"])   → Ctrl+A
+    sp_key_send(keys="enter")                   → 回车
+    sp_key_send(keys="Hello")                   → 打字 Hello
+    """
+    return sp.call("key_send", {
+        "keys": keys,
+        "modifiers": modifiers or [],
+    })
+
+
 # ── 入口 ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
