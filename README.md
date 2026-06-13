@@ -264,13 +264,6 @@ mcp_servers:
     *   `alg.ui.clickButton` 在 SP 10.0.1 有内部 bug（`findChild of undefined`），请使用 Computer Use 的鼠标点击绕过此限制。
 *   **窗口前台**：Computer Use 鼠标/键盘输入受 Windows 前台窗口限制，操作前务必调用 `sp_window_focus()`。
 
-## 🤝 SP2VTF 集成
-
-贴图导出后，可调用 SP2VTF 转换为 Source 引擎格式：
-```bash
-python sp2vtf/convert.py --input ./export/gun_skin_v1 --output ./vtf/
-```
-
 ## 🔧 调试与排错
 
 | 问题 | 常见排查方案 |
