@@ -817,6 +817,7 @@ plugin/                →  plugin/
 | `sp_mouse_scroll` | `amount` | 滚轮（正值=上，负值=下） |
 | `sp_mouse_drag` | `x1, y1, x2, y2, button?, relative?` | 拖拽 A→B |
 | `sp_key_send` | `keys, modifiers?` | 单键/组合键/打字 |
+| `sp_shortcut` | `action` | 预定义快捷键封装 |
 
 ### 键名支持
 
@@ -836,8 +837,8 @@ plugin/                →  plugin/
 
 ### 验收
 
-- 9 个 handler + 9 个 MCP tool + 23 个新测试
-- 230 测试全绿（含已有 207）
+- 10 个 handler + 10 个 MCP tool + 12 个新测试（sp_shortcut）
+- 248 测试全绿（含已有 207）
 - handlers.py 增长 ~250 行，sp_mcp.py 增长 ~140 行
 
 ---

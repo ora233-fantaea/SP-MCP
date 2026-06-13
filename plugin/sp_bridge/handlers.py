@@ -843,21 +843,52 @@ def window_info() -> dict:
 def window_grab(region: dict = None) -> dict:
     import substance_painter.ui as ui
     import base64
-    import tempfile
-    import os
+    import ctypes as ct
+    import struct
+
     win = ui.get_main_window()
+    hwnd = int(win.winId())
+    user32 = ct.windll.user32
+    gdi32 = ct.windll.gdi32
+
+    # Get window rect
+    buf = ct.create_string_buffer(16)
+    user32.GetWindowRect(hwnd, buf)
+    left, top, right, bottom = struct.unpack("iiii", buf.raw[:16])
+    full_w, full_h = right - left, bottom - top
+
+    hdc_window = user32.GetDC(hwnd)
+    hdc_mem = gdi32.CreateCompatibleDC(hdc_window)
+    hbmp = gdi32.CreateCompatibleBitmap(hdc_window, full_w, full_h)
+    gdi32.SelectObject(hdc_mem, hbmp)
+
+    # PW_RENDERFULLCONTENT = 2 — captures OpenGL rendered content correctly
+    user32.PrintWindow(hwnd, hdc_mem, 2)
+
     if region and all(k in region for k in ("x", "y", "width", "height")):
-        from PySide2.QtCore import QRect
-        rect = QRect(region["x"], region["y"], region["width"], region["height"])
-        pixmap = win.grab(rect)
+        rx, ry, rw, rh = region["x"], region["y"], region["width"], region["height"]
     else:
-        pixmap = win.grab()
-    tmp = tempfile.mktemp(suffix=".png")
+        rx, ry, rw, rh = 0, 0, full_w, full_h
+
+    # Extract region bits
+    bmi = struct.pack("IiiHHIIiiII", 40, rw, -rh, 1, 32, 0, rw * rh * 4, 0, 0, 0, 0)
+    pixel_buf = ct.create_string_buffer(rw * rh * 4)
+    gdi32.GetDIBits(hdc_mem, hbmp, ry, rh, pixel_buf, bmi, 0)
+
+    from PySide2.QtGui import QImage, QPixmap
+    img = QImage(bytes(pixel_buf), rw, rh, QImage.Format_ARGB32)
+    pixmap = QPixmap.fromImage(img)
+
+    gdi32.DeleteObject(hbmp)
+    gdi32.DeleteDC(hdc_mem)
+    user32.ReleaseDC(hwnd, hdc_window)
+
+    tmp = __import__("tempfile").mktemp(suffix=".png")
     pixmap.save(tmp, "PNG")
     with open(tmp, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
-    os.unlink(tmp)
-    return {"image": b64, "width": pixmap.width(), "height": pixmap.height()}
+    __import__("os").unlink(tmp)
+    return {"image": b64, "width": rw, "height": rh}
 
 
 def _get_mouse_pos():
@@ -956,8 +987,67 @@ def window_focus() -> dict:
 
 
 def cu_unlock() -> dict:
-    _hide_cu_banner()
+    global _cu_banner
+    if _cu_banner is None:
+        return {"ok": True}
+    _cu_banner.setText("MCP Control Released")
+    _cu_banner.setStyleSheet("""
+        QLabel#_mcp_cu_banner {
+            background-color: rgba(50, 180, 80, 230);
+            color: white;
+            font-size: 15px;
+            font-weight: bold;
+            padding: 8px 40px;
+            border-radius: 4px;
+        }
+    """)
+    _cu_banner.adjustSize()
+    import substance_painter.ui as ui
+    win = ui.get_main_window()
+    bw = _cu_banner.width()
+    _cu_banner.move((win.width() - bw) // 2, 5)
+
+    from PySide2.QtCore import QTimer
+    QTimer.singleShot(10000, _hide_cu_banner)
     return {"ok": True}
+
+
+def cu_banner_text(text: str) -> dict:
+    global _cu_banner
+    if _cu_banner is None:
+        return {"ok": False, "error": "No active banner. Call window_focus first."}
+    _cu_banner.setText(text)
+    _cu_banner.adjustSize()
+    bw = _cu_banner.width()
+    import substance_painter.ui as ui
+    win = ui.get_main_window()
+    _cu_banner.move((win.width() - bw) // 2, 5)
+    return {"ok": True, "text": text}
+
+
+def cu_warning(text: str = "") -> dict:
+    global _cu_banner
+    if _cu_banner is None:
+        return {"ok": False, "error": "No active banner. Call window_focus first."}
+    if not text:
+        text = "Timeout - Please check SP for confirmation dialogs, or check terminal for permission requests"
+    _cu_banner.setText(text)
+    _cu_banner.setStyleSheet("""
+        QLabel#_mcp_cu_banner {
+            background-color: rgba(220, 160, 30, 230);
+            color: white;
+            font-size: 15px;
+            font-weight: bold;
+            padding: 8px 40px;
+            border-radius: 4px;
+        }
+    """)
+    _cu_banner.adjustSize()
+    bw = _cu_banner.width()
+    import substance_painter.ui as ui
+    win = ui.get_main_window()
+    _cu_banner.move((win.width() - bw) // 2, 5)
+    return {"ok": True, "text": text}
 
 
 def mouse_move(x: int, y: int, relative: str = "screen") -> dict:
@@ -1087,6 +1177,64 @@ def key_send(keys: str, modifiers: list = None) -> dict:
                 time.sleep(0.02)
 
     return {"sent": "".join(sent), "modifiers": modifiers or []}
+
+
+# ── 快捷键封装 ────────────────────────────────────────────────────────────────
+
+# SP 常用操作 → (修饰键列表, 主键)
+_SHORTCUT_MAP = {
+    # 文件操作
+    "save":              (["ctrl"],          "s"),
+    "save_as":           (["ctrl", "shift"], "s"),
+    "new_project":       (["ctrl"],          "n"),
+    "open_project":      (["ctrl"],          "o"),
+    "close_project":     (["ctrl"],          "w"),
+    "import_image":      (["ctrl"],          "i"),
+    "export_textures":   (["ctrl", "shift"], "e"),
+    # 编辑操作
+    "undo":              (["ctrl"],          "z"),
+    "redo":              (["ctrl"],          "y"),
+    "select_all":        (["ctrl"],          "a"),
+    "deselect":          (["ctrl", "shift"], "a"),
+    "copy":              (["ctrl"],          "c"),
+    "paste":             (["ctrl"],          "v"),
+    "cut":               (["ctrl"],          "x"),
+    "duplicate":         (["ctrl"],          "d"),
+    "delete_layer":      ([],                "delete"),
+    # 图层操作
+    "new_fill_layer":    (["ctrl", "shift"], "f"),
+    "new_paint_layer":   (["ctrl", "shift"], "p"),
+    "new_group":         (["ctrl", "shift"], "g"),
+    "merge_down":        (["ctrl"],          "e"),
+    # 视口操作
+    "frame_all":         (["alt"],           "f"),
+    "toggle_wireframe":  ([],                "f4"),
+    "toggle_unity":      ([],                "f5"),
+    # 模式切换
+    "paint_mode":        ([],                "1"),
+    "erase_mode":        ([],                "2"),
+    "project_mode":      ([],                "3"),
+    # 显示
+    "toggle_ui":         ([],                "space"),
+    "toggle_mask_view":  (["alt"],           "m"),
+    # Iray
+    "toggle_iray":       ([],                "f10"),
+}
+
+
+def sp_shortcut(action: str) -> dict:
+    """
+    执行预定义的 SP 快捷键操作。
+    """
+    key = action.lower().strip()
+    if key not in _SHORTCUT_MAP:
+        valid = sorted(_SHORTCUT_MAP.keys())
+        raise ValueError(
+            f"Unknown shortcut action: '{action}'. "
+            f"Valid actions: {valid}"
+        )
+    modifiers, keys = _SHORTCUT_MAP[key]
+    return key_send(keys, modifiers)
 
 
 # ── 内部工具 ──────────────────────────────────────────────────────────────────
@@ -1360,6 +1508,8 @@ _REGISTRY: dict = {
     "window_grab":              window_grab,
     "window_focus":             window_focus,
     "cu_unlock":                cu_unlock,
+    "cu_banner_text":           cu_banner_text,
+    "cu_warning":               cu_warning,
     "mouse_move":               mouse_move,
     "mouse_click":              mouse_click,
     "mouse_scroll":             mouse_scroll,

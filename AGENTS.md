@@ -289,6 +289,14 @@ region 格式：`{"x": 0, "y": 0, "width": 400, "height": 300}`（相对窗口�
 **`sp_cu_unlock()`** — 解除 Computer Use 锁定，隐藏警示条。
 操作结束后必须调用，确保警示条消失。
 
+**`sp_cu_warning(text?)`** — 将警示条切换为黄色等待状态，提醒用户检查终端或 SP 弹窗。
+不传 text 时使用默认提示 "Timeout - Check terminal"。
+用户处理完毕后用 `sp_cu_banner_text` 恢复红色，或直接 `sp_cu_unlock` 结束。
+
+**`sp_cu_banner_text(text)`** — 更新警示条显示的文字。
+用于超时时显示提示信息（如 "⚠ 请检查 SP 是否弹出确认对话框"），
+恢复正常后传入原始文字 "MCP Control Active - Do not touch mouse/keyboard"。
+
 **`sp_mouse_move(x, y, relative?)`** — 移动鼠标。
 relative：`"screen"`（屏幕绝对坐标，默认）或 `"window"`（相对 SP 窗口左上角）。
 
@@ -305,6 +313,16 @@ button：`"left"` / `"right"` / `"middle"`。clicks：1=单击, 2=双击。
 keys：文本字符串或键名。modifiers：`["ctrl"]`, `["ctrl","shift"]` 等。
 支持键名：enter, tab, esc, space, backspace, delete, home, end, pageup, pagedown, left, right, up, down, f1-f12, ctrl, shift, alt。
 
+**`sp_shortcut(action)`** — 预定义快捷键封装。
+action 可选值：
+  文件: save / save_as / new_project / open_project / close_project / import_image / export_textures
+  编辑: undo / redo / select_all / deselect / copy / paste / cut / duplicate / delete_layer
+  图层: new_fill_layer / new_paint_layer / new_group / merge_down
+  视口: frame_all / toggle_wireframe / toggle_unity
+  模式: paint_mode / erase_mode / project_mode
+  显示: toggle_ui / toggle_mask_view
+  Iray: toggle_iray
+
 **使用示例：**
 ```
 sp_window_focus()                          → 聚焦 SP + 显示警示条
@@ -312,6 +330,9 @@ sp_window_grab()                           → 截整窗口发给 LLM 分析
 sp_mouse_click(400, 300, "left")           → 在窗口坐标 (400,300) 左键点击
 sp_key_send("a", ["ctrl"])                 → Ctrl+A 全选
 sp_key_send("hello")                       → 逐键打出 "hello"
+sp_shortcut(action="save")                 → Ctrl+S 保存
+sp_shortcut(action="undo")                 → Ctrl+Z 撤销
+sp_shortcut(action="frame_all")            → Alt+F 适配视图
 sp_cu_unlock()                             → 操作完毕，隐藏警示条
 ```
 

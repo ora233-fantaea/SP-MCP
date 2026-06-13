@@ -919,12 +919,76 @@ class TestWindowFocus:
         assert handlers._cu_banner is not None
         result = handlers.cu_unlock()
         assert result == {"ok": True}
+        # QTimer.singleShot fires immediately in mock → banner is hidden
         assert handlers._cu_banner is None
 
     def test_cu_unlock_idempotent(self, fresh_layer_stack):
         result = handlers.cu_unlock()
         assert result == {"ok": True}
         assert handlers._cu_banner is None
+
+    def test_cu_unlock_sets_green_text(self, fresh_layer_stack):
+        handlers.window_focus()
+        banner = handlers._cu_banner
+        assert banner is not None
+        # Patch singleShot to not auto-fire so we can inspect state
+        from PySide2.QtCore import QTimer
+        _orig = QTimer.singleShot
+        QTimer.singleShot = lambda ms, fn: None
+        try:
+            handlers.cu_unlock()
+            assert banner.text() == "MCP Control Released"
+            assert "rgba(50, 180, 80" in banner.styleSheet()
+            assert handlers._cu_banner is banner  # still alive
+        finally:
+            QTimer.singleShot = _orig
+            handlers._hide_cu_banner()
+
+    def test_cu_banner_text_updates(self, fresh_layer_stack):
+        handlers.window_focus()
+        assert handlers._cu_banner is not None
+        result = handlers.cu_banner_text("Custom message here")
+        assert result["ok"] is True
+        assert result["text"] == "Custom message here"
+        assert handlers._cu_banner._text == "Custom message here"
+
+    def test_cu_banner_text_without_banner(self, fresh_layer_stack):
+        result = handlers.cu_banner_text("No banner")
+        assert result["ok"] is False
+        assert "No active banner" in result["error"]
+
+    def test_cu_warning_changes_color(self, fresh_layer_stack):
+        handlers.window_focus()
+        banner = handlers._cu_banner
+        from PySide2.QtCore import QTimer
+        _orig = QTimer.singleShot
+        QTimer.singleShot = lambda ms, fn: None
+        try:
+            result = handlers.cu_warning("Check terminal")
+            assert result["ok"] is True
+            assert result["text"] == "Check terminal"
+            assert banner.text() == "Check terminal"
+            assert "rgba(220, 160, 30" in banner.styleSheet()
+        finally:
+            QTimer.singleShot = _orig
+            handlers._hide_cu_banner()
+
+    def test_cu_warning_default_text(self, fresh_layer_stack):
+        handlers.window_focus()
+        from PySide2.QtCore import QTimer
+        _orig = QTimer.singleShot
+        QTimer.singleShot = lambda ms, fn: None
+        try:
+            result = handlers.cu_warning()
+            assert result["ok"] is True
+            assert "Timeout" in result["text"]
+        finally:
+            QTimer.singleShot = _orig
+            handlers._hide_cu_banner()
+
+    def test_cu_warning_without_banner(self, fresh_layer_stack):
+        result = handlers.cu_warning("test")
+        assert result["ok"] is False
 
 
 class TestMouseMove:
@@ -1011,3 +1075,66 @@ class TestKeySend:
         result = handlers.key_send("z", modifiers=["ctrl", "shift"])
         assert result["sent"] == "z"
         assert result["modifiers"] == ["ctrl", "shift"]
+
+
+# ── sp_shortcut ───────────────────────────────────────────────────────────────
+
+class TestShortcut:
+    def test_save(self, fresh_layer_stack):
+        result = handlers.sp_shortcut("save")
+        assert result["sent"] == "s"
+        assert result["modifiers"] == ["ctrl"]
+
+    def test_undo(self, fresh_layer_stack):
+        result = handlers.sp_shortcut("undo")
+        assert result["sent"] == "z"
+        assert result["modifiers"] == ["ctrl"]
+
+    def test_redo(self, fresh_layer_stack):
+        result = handlers.sp_shortcut("redo")
+        assert result["sent"] == "y"
+        assert result["modifiers"] == ["ctrl"]
+
+    def test_export_textures(self, fresh_layer_stack):
+        result = handlers.sp_shortcut("export_textures")
+        assert result["sent"] == "e"
+        assert result["modifiers"] == ["ctrl", "shift"]
+
+    def test_frame_all(self, fresh_layer_stack):
+        result = handlers.sp_shortcut("frame_all")
+        assert result["sent"] == "f"
+        assert result["modifiers"] == ["alt"]
+
+    def test_toggle_wireframe(self, fresh_layer_stack):
+        result = handlers.sp_shortcut("toggle_wireframe")
+        assert result["sent"] == "f4"
+        assert result["modifiers"] == []
+
+    def test_paint_mode(self, fresh_layer_stack):
+        result = handlers.sp_shortcut("paint_mode")
+        assert result["sent"] == "1"
+        assert result["modifiers"] == []
+
+    def test_erase_mode(self, fresh_layer_stack):
+        result = handlers.sp_shortcut("erase_mode")
+        assert result["sent"] == "2"
+        assert result["modifiers"] == []
+
+    def test_delete_layer(self, fresh_layer_stack):
+        result = handlers.sp_shortcut("delete_layer")
+        assert result["sent"] == "delete"
+        assert result["modifiers"] == []
+
+    def test_unknown_action_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="Unknown shortcut action"):
+            handlers.sp_shortcut("nonexistent_action")
+
+    def test_case_insensitive(self, fresh_layer_stack):
+        result = handlers.sp_shortcut("Save")
+        assert result["sent"] == "s"
+        assert result["modifiers"] == ["ctrl"]
+
+    def test_whitespace_trimmed(self, fresh_layer_stack):
+        result = handlers.sp_shortcut("  undo  ")
+        assert result["sent"] == "z"
+        assert result["modifiers"] == ["ctrl"]

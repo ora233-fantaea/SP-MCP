@@ -46,7 +46,7 @@ name 必须与 `sp_get_texture_sets` 返回的名称**完全一致**（大小写
 
 **工作流：**
 ```
-1. sp_run_python("import substance_painter.texturesets; ts = substance_painter.texturesets.get_active(); print(ts.get_resolution())")
+1. sp_run_python("import substance_painter.textureset as ts_mod; ts = ts_mod.get_active_stack(); print(ts_mod.get_resolution(ts))")
    确认当前分辨率
 2. sp_set_texture_set_resolution(2048, 2048)   修改
 3. sp_capture_viewport("quick")               确认效果

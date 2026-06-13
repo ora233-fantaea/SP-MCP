@@ -37,7 +37,7 @@ description: 调用 MCP tools 操作 Substance Painter 图层栈，包括新建�
 | 节点类型 `node.get_type().name` | `type(node).__name__` → `"FillLayerNode"` / `"GroupLayerNode"` / `"PaintLayerNode"` |
 | Scalar 通道用 `ls.Color` | 必须用 `colormanagement.Color(v,v,v)` |
 | `node.get_source()` 返回 Color | 返回 `SourceUniformColor`，需 `.get_color().value_raw` 取值 |
-| `move_node()` / `duplicate_node()` | SP 10.x 不存在，用 UI 操作 |
+| `move_node()` / `duplicate_node()` | SP 10.x 不存在，`move_layer`/`group_layers`/`ungroup_layer` 用 delete+re-insert 工作流实现 |
 | `substance_painter.undo` | 不存在，用 `ScopedModification` 批量合并 + 用户 Ctrl+Z |
 | `substance_painter.camera` | 不存在，相机 API 在 `substance_painter.display.Camera` |
 | `ScopedModification` 只能 `with` | 支持手动 `__enter__()` / `__exit__()` 跨 HTTP 调用 |
@@ -87,11 +87,16 @@ description: 调用 MCP tools 操作 Substance Painter 图层栈，包括新建�
 
 **`sp_duplicate_layer(layer_id)`** — 复制图层，新图层在原图层上方。
 
-**`sp_move_layer(layer_id, target_id, position)`** — ⚠️ SP 10.x 无 API，NotImplementedError。用 UI 拖拽。
+**`sp_move_layer(layer_id, target_id, position)`** — 移动图层到目标图层的上方或下方。
+- `position`: `"above"`（默认）/ `"below"`
+- **实现方式：** delete+re-insert 工作流（SP 10.x 无原生 `move_node` API）
 
-**`sp_group_layers(layer_ids)`** — ⚠️ SP 10.x 无 API，NotImplementedError。用 Ctrl+G。
+**`sp_group_layers(layer_ids)`** — 将多个图层打包进新分组。
+- `layer_ids`: 图层 id 列表（顺序任意，自动按栈顺序排列）
+- **实现方式：** `insert_group` + clone 每个节点 + delete 原节点
 
-**`sp_ungroup_layer(layer_id)`** — ⚠️ SP 10.x 无 API，NotImplementedError。用 Ctrl+Shift+G。
+**`sp_ungroup_layer(layer_id)`** — 解散分组，子层提升到父级。
+- **实现方式：** clone 所有子节点到组位置 + delete 组
 
 ### Smart Material（需要 SP 10.0+）
 
@@ -171,4 +176,45 @@ sp_end_batch()
 | `"Material not found"` | 名称拼写错误 | 先调 `sp_list_materials` 确认 |
 | `"Unknown channel"` | 通道名错误 | 可选: Roughness/Metallic/Height/BaseColor/Normal |
 | `"This node already has a mask"` | 图层已有遮罩 | 先删除现有遮罩或换图层 |
-| `"NotImplementedError"` | 该操作 SP 10.x 无 Python API | 用 UI 操作 |
+| `"name must not be empty"` | 图层名参数为空 | 传入非空字符串 |
+| `"A batch is already active"` | `begin_batch` 重复调用 | 先 `end_batch` 结束上一个批量 |
+
+---
+
+## 图层移动与分组示例（Phase 13 实现）
+
+> ⚠️ 这三个操作通过 **delete+re-insert** 工作流实现，操作后 layer_id 会变化，需重新调用 `sp_get_layer_stack`。
+
+### 移动图层
+
+```
+sp_get_layer_stack()                           确认图层 ID
+sp_move_layer(layer_id="111", target_id="222", position="above")
+sp_get_layer_stack()                           重新读取新 ID
+```
+
+### 分组多个图层
+
+```
+sp_get_layer_stack()                           确认图层 ID
+sp_group_layers(layer_ids=["111", "222", "333"])
+sp_get_layer_stack()                           重新读取，找到新建的 GroupLayerNode
+```
+
+### 解散分组
+
+```
+sp_get_layer_stack()                           找到 GroupLayerNode 的 ID
+sp_ungroup_layer(layer_id="999")
+sp_get_layer_stack()                           重新读取，子层已提升到父级
+```
+
+### 搭配 batch 的完整工作流
+
+```
+sp_begin_batch("Reorganize Layers")
+  sp_group_layers(layer_ids=["111", "222"])    先分组
+  sp_move_layer(group_id, target_id, "above")  再移动
+sp_end_batch()
+→ 用户按 Ctrl+Z 一次撤销所有重组操作
+```

@@ -707,6 +707,34 @@ def sp_cu_unlock() -> dict:
 
 
 @mcp.tool()
+def sp_cu_banner_text(text: str) -> dict:
+    """
+    更新 Computer Use 警示条显示的文字。
+
+    用于超时时显示提示信息（如 "⚠ 请检查 SP 是否弹出确认对话框"），
+    恢复正常后传入原始文字 "MCP Control Active - Do not touch mouse/keyboard"。
+
+    返回 {"ok": bool, "text": str}
+    """
+    return sp.call("cu_banner_text", {"text": text})
+
+
+@mcp.tool()
+def sp_cu_warning(text: str = "") -> dict:
+    """
+    将警示条切换为黄色等待状态，提醒用户检查终端或 SP 弹窗。
+
+    用于 Computer Use 操作超时时：
+    1. sp_cu_warning("Timeout - Check terminal")  → 黄色警示条
+    2. 用户处理完毕后，恢复：sp_cu_banner_text("MCP Control Active ...")  → 红色
+    3. 操作结束：sp_cu_unlock()  → 绿色 → 消失
+
+    不传 text 时使用默认提示文字。
+    """
+    return sp.call("cu_warning", {"text": text})
+
+
+@mcp.tool()
 def sp_mouse_move(x: int, y: int, relative: str = "screen") -> dict:
     """
     移动鼠标到指定坐标。
@@ -791,6 +819,31 @@ def sp_key_send(keys: str, modifiers: list = None) -> dict:
         "keys": keys,
         "modifiers": modifiers or [],
     })
+
+
+@mcp.tool()
+def sp_shortcut(action: str) -> dict:
+    """
+    执行预定义的 SP 快捷键操作。
+
+    action: 操作名称，可选值：
+      文件: save / save_as / new_project / open_project / close_project
+            import_image / export_textures
+      编辑: undo / redo / select_all / deselect / copy / paste / cut
+            duplicate / delete_layer
+      图层: new_fill_layer / new_paint_layer / new_group / merge_down
+      视口: frame_all / toggle_wireframe / toggle_unity
+      模式: paint_mode / erase_mode / project_mode
+      显示: toggle_ui / toggle_mask_view
+      Iray: toggle_iray
+
+    示例：
+    sp_shortcut(action="save")             → Ctrl+S
+    sp_shortcut(action="undo")             → Ctrl+Z
+    sp_shortcut(action="frame_all")        → Alt+F
+    sp_shortcut(action="toggle_wireframe") → F4
+    """
+    return sp.call("sp_shortcut", {"action": action})
 
 
 # ── 入口 ──────────────────────────────────────────────────────────────────────

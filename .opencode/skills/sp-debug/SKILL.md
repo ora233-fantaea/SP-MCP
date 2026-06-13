@@ -61,11 +61,18 @@ description: 排查 SP MCP bridge 连接问题、plugin 加载失败、tool 调�
 
 **解决：** 先用 `delete_layer` 删掉旧遮罩，或换一个图层
 
-### "NotImplementedError: move_layer / group_layers / ungroup_layer"
+### "RuntimeError: move_layer / group_layers / ungroup_layer NotImplementedError"
 
-**症状：** 调用需要 SP 10.x 无 Python API 的操作
+**症状：** `NotImplementedError: move_layer / group_layers / ungroup_layer`
 
-**解决：** 这些操作只能在 Painter UI 中完成（拖拽 / Ctrl+G / Ctrl+Shift+G）
+**解决：** Phase 13 后这三个操作已通过 delete+re-insert 工作流实现。
+如果仍然报错，说明 handlers.py 版本过旧，热重载或重启 Painter。
+
+### "alg.ui.clickButton 报错"
+
+**症状：** `findChild of undefined`
+
+**解决：** SP 10.0.1 的已知 bug，用 Computer Use 鼠标点击替代。
 
 ### Smart API 不可用
 
@@ -97,7 +104,7 @@ Get-Content "$env:USERPROFILE\sp_bridge.log" -Tail 20
 
 ```powershell
 # 1. 复制更新的 handlers.py
-Copy-Item "E:\SP-MCP\plugin\handlers.py" "$env:USERPROFILE\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\sp_bridge\handlers.py" -Force
+Copy-Item "E:\SP-MCP\plugin\sp_bridge\handlers.py" "$env:USERPROFILE\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\sp_bridge\handlers.py" -Force
 
 # 2. 在 Painter Python Console 执行：
 import importlib, sp_bridge.handlers; importlib.reload(sp_bridge.handlers)

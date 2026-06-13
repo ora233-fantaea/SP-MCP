@@ -570,8 +570,50 @@ def _make_sp_mock():
         @staticmethod
         def SetForegroundWindow(hwnd):
             _ctypes_state["fg_hwnd"] = hwnd
+        @staticmethod
+        def FindWindowW(cls, title):
+            return 12345
+        @staticmethod
+        def GetWindowRect(hwnd, buf):
+            import struct
+            struct.pack_into("iiii", buf, 0, 0, 0, 1920, 1080)
+        @staticmethod
+        def GetDC(hwnd):
+            return 1
+        @staticmethod
+        def ReleaseDC(hwnd, dc):
+            return 1
+        @staticmethod
+        def PrintWindow(hwnd, dc, flags):
+            return 1
 
     _real_ctypes.windll.user32 = _MockUser32()
+
+    class _MockGdi32:
+        @staticmethod
+        def CreateCompatibleDC(hdc):
+            return 2
+        @staticmethod
+        def CreateCompatibleBitmap(hdc, w, h):
+            return 3
+        @staticmethod
+        def SelectObject(hdc, obj):
+            return obj
+        @staticmethod
+        def GetDIBits(hdc, bmp, start, count, buf, bmi, usage):
+            # Fill with white pixels (BGRA: 0xFF, 0xFF, 0xFF, 0xFF)
+            import struct
+            for i in range(0, len(buf), 4):
+                struct.pack_into("BBBB", buf, i, 255, 255, 255, 255)
+            return count
+        @staticmethod
+        def DeleteObject(obj):
+            return 1
+        @staticmethod
+        def DeleteDC(hdc):
+            return 1
+
+    _real_ctypes.windll.gdi32 = _MockGdi32()
 
     # ── PySide2 mock ──
     pyside2 = types.ModuleType("PySide2")
@@ -631,6 +673,34 @@ def _make_sp_mock():
         'FramelessWindowHint': 0x00000800,
         'WindowStaysOnTopHint': 0x00040000,
     })
+
+    pyside2_gui = types.ModuleType("PySide2.QtGui")
+
+    class _MockQImage:
+        Format_ARGB32 = 5
+        def __init__(self, data, w, h, fmt):
+            self._data = data; self._w = w; self._h = h
+        def width(self): return self._w
+        def height(self): return self._h
+
+    class _MockQPixmap:
+        def __init__(self):
+            self._data = b""; self._w = 0; self._h = 0
+        @staticmethod
+        def fromImage(img):
+            pm = _MockQPixmap()
+            pm._data = img._data; pm._w = img._w; pm._h = img._h
+            return pm
+        def save(self, path, fmt):
+            import struct
+            with open(path, 'wb') as f:
+                # Minimal valid PNG
+                f.write(b"\x89PNG\r\n\x1a\n")
+                f.write(b"\x00" * 64)
+
+    pyside2_gui.QImage = _MockQImage
+    pyside2_gui.QPixmap = _MockQPixmap
+    pyside2.QtGui = pyside2_gui
 
     pyside2_widgets = types.ModuleType("PySide2.QtWidgets")
 
@@ -812,7 +882,8 @@ def _make_sp_mock():
         def adjustSize(self): pass
         def raise_(self): pass
         def deleteLater(self): pass
-        def setStyleSheet(self, s): pass
+        def setStyleSheet(self, s): self._stylesheet = s
+        def styleSheet(self): return getattr(self, '_stylesheet', '')
     pyside2_widgets.QLabel = _MockQLabel
     pyside2.QtWidgets = pyside2_widgets
 
@@ -843,6 +914,7 @@ def _make_sp_mock():
 
     sys.modules["PySide2"] = pyside2
     sys.modules["PySide2.QtCore"] = pyside2_core
+    sys.modules["PySide2.QtGui"] = pyside2_gui
     sys.modules["PySide2.QtWidgets"] = pyside2_widgets
 
     # ── 构建 mock Iray 面板 ──
