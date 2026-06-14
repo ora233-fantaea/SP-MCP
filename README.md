@@ -16,7 +16,10 @@
 ---
 
 > [!IMPORTANT]  
-> 该项目**必须**搭配支持视觉输入和支持工具调用（Tool Calling）的 LLM（缺一不可！），如 **Claude Sonnet 4/4.5/4.6, Claude Opus 4.5+, Kimi k2.6, Gemini 3.5 Flash, Gemini 3.1 Pro, Qwen 3.5/3.6** 等模型。材质创作工作流深度依赖 LLM 对截图的视觉评估来驱动迭代决策。
+> 该项目要求 LLM **同时具备视觉识别（Vision）与工具调用（Tool Calling）能力**，二者缺一不可。材质创作工作流的核心闭环是：AI 截图评估 → 调参 → 再截图验证，因此纯文本模型无法使用。
+>
+> ✅ **推荐模型**：Claude Sonnet 4/4.5、Claude Opus 4.5+  
+> ⚠️ **也可尝试**：Gemini、Qwen、Kimi 等支持 Vision + Tool 的模型（兼容性因客户端而异，需自行测试）
 
 ## 🎯 核心能力与工作流
 
