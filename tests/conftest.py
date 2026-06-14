@@ -298,8 +298,14 @@ def _make_sp_mock():
     layerstack.delete_node = delete_node
     layerstack.move_node = move_node
 
+    # Global node registry — 用于 lookup 所有节点（含效果节点）
+    _node_registry = {}
+
     def _get_node_by_uid(uid):
-        """递归搜索所有节点（根 + 子节点）。"""
+        """递归搜索所有节点（根 + 子节点）+ 效果节点注册表。"""
+        # 先检查全局注册表
+        if uid in _node_registry:
+            return _node_registry[uid]
         def _search(nodes):
             for n in nodes:
                 if n.uid() == uid:
@@ -311,6 +317,7 @@ def _make_sp_mock():
             return None
         return _search(list(_root_nodes))
     layerstack.get_node_by_uid = _get_node_by_uid
+    layerstack._node_registry = _node_registry
 
     class MockScopedModification:
         """Mock ScopedModification — 记录 enter/exit 状态。"""
@@ -567,6 +574,15 @@ def _make_sp_mock():
     textureset.all_texture_sets = lambda: list(_mock_texture_sets)
     textureset.Stack = MockStack
     textureset.Resolution = MockResolution
+    # Add from_name static method to MockTextureSet
+    @staticmethod
+    def _ts_from_name(name):
+        for ts in _mock_texture_sets:
+            if ts.name() == name:
+                return ts
+        return MockTextureSet(99, name)
+    MockTextureSet.from_name = _ts_from_name
+    textureset.TextureSet = MockTextureSet  # Alias for handler compatibility
     textureset._mock_texture_sets = _mock_texture_sets
 
     # ── substance_painter.display ──
@@ -1262,6 +1278,596 @@ def _make_sp_mock():
     sys.modules["substance_painter.resource"]    = resource
     sys.modules["substance_painter.source"]      = source_mod
     sys.modules["substance_painter.properties"]  = properties_mod
+
+    # ── substance_painter.levels (new mock) ──
+    levels_mod = types.ModuleType("substance_painter.levels")
+
+    class MockLevelsChannel:
+        def __init__(self, in_low=0.0, in_mid=0.5, in_high=1.0,
+                     out_low=0.0, out_high=1.0, gamma=1.0, clamp=False):
+            self.in_low = in_low
+            self.in_mid = in_mid
+            self.in_high = in_high
+            self.out_low = out_low
+            self.out_high = out_high
+            self.gamma = gamma
+            self.clamp = clamp
+
+    class MockLevelsParamsMono:
+        def __init__(self):
+            self.mono = MockLevelsChannel()
+
+    class MockLevelsParamsRGB:
+        def __init__(self):
+            self.red = MockLevelsChannel()
+            self.green = MockLevelsChannel()
+            self.blue = MockLevelsChannel()
+
+    levels_mod.LevelsParamsMono = MockLevelsParamsMono
+    levels_mod.LevelsParamsRGB = MockLevelsParamsRGB
+    sp.levels = levels_mod
+    sys.modules["substance_painter.levels"] = levels_mod
+
+    # ── substance_painter.textureset extensions (MeshMapUsage, UVTile) ──
+    class MeshMapUsage(_Enum):
+        AO         = _Enum("AO")
+        Curvature  = _Enum("Curvature")
+        Normal     = _Enum("Normal")
+        Height     = _Enum("Height")
+        ID         = _Enum("ID")
+        Opacity    = _Enum("Opacity")
+        Position   = _Enum("Position")
+        Thickness  = _Enum("Thickness")
+        WorldSpaceNormal = _Enum("WorldSpaceNormal")
+        BentNormals = _Enum("BentNormals")
+
+    textureset.MeshMapUsage = MeshMapUsage
+
+    class MockUVTile:
+        def __init__(self, u=0, v=0, material_id=0):
+            self.u = u
+            self.v = v
+            self._material_id = material_id
+        @staticmethod
+        def _belong_to_texture_set(tiles, material_id):
+            return True
+    textureset.UVTile = MockUVTile
+
+    # Add uv_tile method to MockTextureSet
+    def _ts_uv_tile(self, u, v):
+        return MockUVTile(u, v, self.material_id)
+    MockTextureSet.uv_tile = _ts_uv_tile
+
+    # Add Channel.is_color() mock
+    class MockChannel:
+        def __init__(self, is_color=True):
+            self._is_color = is_color
+        def is_color(self):
+            return self._is_color
+
+    textureset.Channel = MockChannel
+
+    # ── substance_painter.resource extensions (Usage enum) ──
+    class Usage:
+        FILTER = "filter"
+        GENERATOR = "generator"
+        SUBSTANCE = "substance"
+        SMART_MATERIAL = "smartmaterial"
+        SMART_MASK = "smartmask"
+        TEXTURE = "texture"
+        ENVIRONMENT = "environment"
+        EXPORT_PRESET = "export_preset"
+        COLOR_LUT = "color_lut"
+    resource.Usage = Usage
+
+    # ── substance_painter.layerstack extensions (effect nodes, selection) ──
+    class NodeStack:
+        Content  = "Content"
+        Mask     = "Mask"
+        Substack = "Substack"
+
+    layerstack.NodeStack = NodeStack
+
+    # Effect node classes
+    def _make_effect_node_class(class_name):
+        """创建效果节点 mock。"""
+        def __init__(self, uid_or_name):
+            if isinstance(uid_or_name, int):
+                self._uid = uid_or_name
+                self._name = f"{class_name}_{uid_or_name}"
+            else:
+                self._uid = 0
+                self._name = uid_or_name or class_name
+            self._source = None
+            self._params = None
+            self._affected_channel = ChannelType.BaseColor
+            self._stack_obj = None
+            self._parent = None
+            self._children = []
+
+        def uid(self):
+            return self._uid
+
+        def get_name(self):
+            return self._name
+
+        def set_name(self, v):
+            self._name = v
+
+        def get_stack(self):
+            return self._stack_obj
+
+        ns = {"__init__": __init__, "uid": uid, "get_name": get_name,
+              "set_name": set_name, "get_stack": get_stack}
+        return type(class_name, (), ns)
+
+    FilterEffectNode = _make_effect_node_class("FilterEffectNode")
+    GeneratorEffectNode = _make_effect_node_class("GeneratorEffectNode")
+    LevelsEffectNode = _make_effect_node_class("LevelsEffectNode")
+    CompareMaskEffectNode = _make_effect_node_class("CompareMaskEffectNode")
+    ColorSelectionEffectNode = _make_effect_node_class("ColorSelectionEffectNode")
+    AnchorPointEffectNode = _make_effect_node_class("AnchorPointEffectNode")
+
+    # Add effect-specific methods
+    def _filter_gen_get_source(self):
+        return self._source
+    def _filter_gen_set_source(self, source):
+        self._source = source
+        return source
+    FilterEffectNode.get_source = _filter_gen_get_source
+    FilterEffectNode.set_source = _filter_gen_set_source
+    GeneratorEffectNode.get_source = _filter_gen_get_source
+    GeneratorEffectNode.set_source = _filter_gen_set_source
+
+    def _levels_get_params(self):
+        if self._params is None:
+            self._params = MockLevelsParamsMono()
+        return self._params
+    def _levels_set_params(self, params):
+        self._params = params
+    LevelsEffectNode.get_parameters = _levels_get_params
+    LevelsEffectNode.set_parameters = _levels_set_params
+    LevelsEffectNode.affected_channel = property(
+        lambda self: self._affected_channel,
+        lambda self, v: setattr(self, '_affected_channel', v))
+
+    # CompareMaskEffectOperand and CompareMaskEffectOperation
+    class CompareMaskEffectOperand(_Enum):
+        Source         = _Enum("Source")
+        Target         = _Enum("Target")
+        CurrentState   = _Enum("CurrentState")
+        Constant       = _Enum("Constant")
+
+    class CompareMaskEffectOperation(_Enum):
+        Equal           = _Enum("Equal")
+        NotEqual        = _Enum("NotEqual")
+        Greater         = _Enum("Greater")
+        Less            = _Enum("Less")
+        GreaterOrEqual   = _Enum("GreaterOrEqual")
+        LessOrEqual      = _Enum("LessOrEqual")
+        WithinTolerance = _Enum("WithinTolerance")
+
+    class MockCompareMaskParams:
+        def __init__(self):
+            self.channel = ChannelType.BaseColor
+            self.left_operand = CompareMaskEffectOperand.Source
+            self.right_operand = CompareMaskEffectOperand.Target
+            self.operation = CompareMaskEffectOperation.Equal
+            self.constant = 0.5
+            self.tolerance = 0.1
+            self.hardness = 0.5
+
+    def _compare_get_params(self):
+        if self._params is None:
+            self._params = MockCompareMaskParams()
+        return self._params
+    def _compare_set_params(self, params):
+        self._params = params
+    CompareMaskEffectNode.get_parameters = _compare_get_params
+    CompareMaskEffectNode.set_parameters = _compare_set_params
+
+    # ColorSelection
+    class ColorSelectionBackgroundColor(_Enum):
+        Black = _Enum("Black")
+        White = _Enum("White")
+        Transparent = _Enum("Transparent")
+
+    class MockColorSelectionParams:
+        def __init__(self):
+            self.id_mask = None
+            self.output_value = 1.0
+            self.hardness = 0.5
+            self.tolerance = 0.1
+            self.background_color = ColorSelectionBackgroundColor.Black
+            self.colors = []
+
+    def _color_sel_get_params(self):
+        if self._params is None:
+            self._params = MockColorSelectionParams()
+        return self._params
+    def _color_sel_set_params(self, params):
+        self._params = params
+    ColorSelectionEffectNode.get_parameters = _color_sel_get_params
+    ColorSelectionEffectNode.set_parameters = _color_sel_set_params
+
+    # Register effect classes
+    layerstack.FilterEffectNode = FilterEffectNode
+    layerstack.GeneratorEffectNode = GeneratorEffectNode
+    layerstack.LevelsEffectNode = LevelsEffectNode
+    layerstack.CompareMaskEffectNode = CompareMaskEffectNode
+    layerstack.ColorSelectionEffectNode = ColorSelectionEffectNode
+    layerstack.AnchorPointEffectNode = AnchorPointEffectNode
+    layerstack.CompareMaskEffectOperand = CompareMaskEffectOperand
+    layerstack.CompareMaskEffectOperation = CompareMaskEffectOperation
+    layerstack.ColorSelectionBackgroundColor = ColorSelectionBackgroundColor
+
+    # Insert functions for effects — 返回 mock node 对象（有 uid() 方法）
+    _next_effect_uid = [1000]
+    def _next_euid():
+        _next_effect_uid[0] += 1
+        return _next_effect_uid[0]
+
+    # Effect node classes with proper type().name matching the real API
+    _effect_node_classes = {}
+    for _effect_type_name in ("FilterEffectNode", "GeneratorEffectNode",
+                               "LevelsEffectNode", "CompareMaskEffectNode",
+                               "ColorSelectionEffectNode", "AnchorPointEffectNode",
+                               "PaintEffectNode", "FillEffectNode"):
+        _effect_node_classes[_effect_type_name] = type(_effect_type_name, (), {
+            "__init__": lambda self, uid_val, nt=_effect_type_name: setattr(self, "_uid", uid_val) or setattr(self, "_name", f"{nt}_{uid_val}"),
+            "uid": lambda self: self._uid,
+            "get_name": lambda self: self._name,
+            "set_name": lambda self, v: setattr(self, "_name", v),
+            "get_stack": lambda self: _mock_stack,
+        })
+    layerstack._effect_node_classes = _effect_node_classes
+
+    # Patch effect-specific methods onto the right classes
+    LevelsEffectNodeCls = _effect_node_classes["LevelsEffectNode"]
+    setattr(LevelsEffectNodeCls, "get_parameters",
+            lambda self: MockLevelsParamsMono())
+    setattr(LevelsEffectNodeCls, "set_parameters",
+            lambda self, p: setattr(self, "_levels_params", p))
+    setattr(LevelsEffectNodeCls, "affected_channel",
+            property(lambda self: ChannelType.BaseColor,
+                     lambda self, v: setattr(self, "_affected_channel", v)))
+
+    CompareMaskEffectNodeCls = _effect_node_classes["CompareMaskEffectNode"]
+    setattr(CompareMaskEffectNodeCls, "get_parameters",
+            lambda self: MockCompareMaskParams())
+    setattr(CompareMaskEffectNodeCls, "set_parameters",
+            lambda self, p: setattr(self, "_cmp_params", p))
+
+    ColorSelectionEffectNodeCls = _effect_node_classes["ColorSelectionEffectNode"]
+    setattr(ColorSelectionEffectNodeCls, "get_parameters",
+            lambda self: MockColorSelectionParams())
+    setattr(ColorSelectionEffectNodeCls, "set_parameters",
+            lambda self, p: setattr(self, "_cs_params", p))
+
+    FilterEffectNodeCls = _effect_node_classes["FilterEffectNode"]
+    setattr(FilterEffectNodeCls, "get_source",
+            lambda self: getattr(self, "_source", None))
+    setattr(FilterEffectNodeCls, "set_source",
+            lambda self, src: setattr(self, "_source", src) or src)
+    setattr(FilterEffectNodeCls, "remove_source",
+            lambda self: setattr(self, "_source", None))
+
+    GeneratorEffectNodeCls = _effect_node_classes["GeneratorEffectNode"]
+    setattr(GeneratorEffectNodeCls, "get_source",
+            lambda self: getattr(self, "_source", None))
+    setattr(GeneratorEffectNodeCls, "set_source",
+            lambda self, src: setattr(self, "_source", src) or src)
+    setattr(GeneratorEffectNodeCls, "remove_source",
+            lambda self: setattr(self, "_source", None))
+
+    def _make_effect_node(effect_type_name, uid):
+        """创建一个带有 uid() 方法的类型正确的 mock effect node。"""
+        cls = _effect_node_classes.get(effect_type_name)
+        if cls is None:
+            cls = type(effect_type_name, (), {
+                "uid": lambda self: uid,
+                "get_name": lambda self: effect_type_name,
+                "get_stack": lambda self: _mock_stack,
+            })
+        return cls(uid)
+
+    def _insert_levels_effect(pos_tuple):
+        n = _make_effect_node("LevelsEffectNode", _next_euid())
+        _node_registry[n.uid()] = n; return n
+    def _insert_compare_mask_effect(pos_tuple):
+        n = _make_effect_node("CompareMaskEffectNode", _next_euid())
+        _node_registry[n.uid()] = n; return n
+    def _insert_filter_effect(pos_tuple, url):
+        n = _make_effect_node("FilterEffectNode", _next_euid())
+        _node_registry[n.uid()] = n; return n
+    def _insert_generator_effect(pos_tuple, url):
+        n = _make_effect_node("GeneratorEffectNode", _next_euid())
+        _node_registry[n.uid()] = n; return n
+    def _insert_anchor_point_effect(pos_tuple, name):
+        n = _make_effect_node("AnchorPointEffectNode", _next_euid())
+        _node_registry[n.uid()] = n; return n
+    def _insert_color_selection_effect(pos_tuple):
+        n = _make_effect_node("ColorSelectionEffectNode", _next_euid())
+        _node_registry[n.uid()] = n; return n
+
+    layerstack.insert_levels_effect = _insert_levels_effect
+    layerstack.insert_compare_mask_effect = _insert_compare_mask_effect
+    layerstack.insert_filter_effect = _insert_filter_effect
+    layerstack.insert_generator_effect = _insert_generator_effect
+    layerstack.insert_anchor_point_effect = _insert_anchor_point_effect
+    layerstack.insert_color_selection_effect = _insert_color_selection_effect
+
+    # Selection API
+    _mock_selected_nodes = []
+    def _get_selected_nodes(stack):
+        return list(_mock_selected_nodes)
+    def _set_selected_nodes(nodes):
+        _mock_selected_nodes.clear()
+        _mock_selected_nodes.extend(nodes)
+    layerstack.get_selected_nodes = _get_selected_nodes
+    layerstack.set_selected_nodes = _set_selected_nodes
+
+    # ── substance_painter.baking (new mock) ──
+    baking_mod = types.ModuleType("substance_painter.baking")
+
+    class BakingStatus(_Enum):
+        Success = _Enum("Success")
+        Cancel  = _Enum("Cancel")
+        Fail    = _Enum("Fail")
+
+    class CurvatureMethod(_Enum):
+        FromMesh       = _Enum("FromMesh")
+        FromNormalMap  = _Enum("FromNormalMap")
+
+    class MockBakingParameters:
+        def __init__(self, material_id=0):
+            self.material_id = material_id
+            self._common = {
+                "OutputSize": Property("OutputSize", [2048, 2048]),
+                "HipolyMesh": Property("HipolyMesh", ""),
+                "NormalFormat": Property("NormalFormat", _Enum("OpenGL")),
+            }
+            self._curvature = CurvatureMethod.FromMesh
+            self._ts_enabled = True
+            self._enabled_bakers = [MeshMapUsage.AO, MeshMapUsage.Normal,
+                                    MeshMapUsage.Curvature]
+            self._enabled_uv_tiles = [(0, 0)]
+
+        @staticmethod
+        def from_texture_set(texture_set):
+            return MockBakingParameters(texture_set.material_id)
+
+        @staticmethod
+        def from_texture_set_name(name):
+            return MockBakingParameters(1)
+
+        def texture_set(self):
+            return textureset.MockTextureSet(self.material_id, "BakingTS")
+
+        def common(self):
+            return dict(self._common)
+
+        def baker(self, usage):
+            return {}
+
+        @staticmethod
+        def set(property_values):
+            pass
+
+        def get_curvature_method(self):
+            return self._curvature
+
+        def set_curvature_method(self, method):
+            self._curvature = method
+
+        def is_baker_enabled(self, usage):
+            return usage in self._enabled_bakers
+
+        def set_baker_enabled(self, usage, enable):
+            if enable:
+                if usage not in self._enabled_bakers:
+                    self._enabled_bakers.append(usage)
+            else:
+                if usage in self._enabled_bakers:
+                    self._enabled_bakers.remove(usage)
+
+        def get_enabled_bakers(self):
+            return list(self._enabled_bakers)
+
+        def set_enabled_bakers(self, usages):
+            self._enabled_bakers = list(usages)
+
+        def is_textureset_enabled(self):
+            return self._ts_enabled
+
+        def set_textureset_enabled(self, enable):
+            self._ts_enabled = enable
+
+        def is_uv_tile_enabled(self, tile):
+            return (tile.u, tile.v) in self._enabled_uv_tiles
+
+        def set_uv_tile_enabled(self, tile, enable):
+            t = (tile.u, tile.v)
+            if enable:
+                if t not in self._enabled_uv_tiles:
+                    self._enabled_uv_tiles.append(t)
+            else:
+                if t in self._enabled_uv_tiles:
+                    self._enabled_uv_tiles.remove(t)
+
+        def get_enabled_uv_tiles(self):
+            return [MockUVTile(u, v, self.material_id)
+                    for u, v in self._enabled_uv_tiles]
+
+        def set_enabled_uv_tiles(self, tiles):
+            self._enabled_uv_tiles = [(t.u, t.v) for t in tiles]
+
+    def _bake_async(ts):
+        return types.SimpleNamespace()
+    def _bake_selected_async():
+        return types.SimpleNamespace()
+
+    baking_mod.BakingParameters = MockBakingParameters
+    baking_mod.BakingStatus = BakingStatus
+    baking_mod.CurvatureMethod = CurvatureMethod
+    baking_mod.bake_async = _bake_async
+    baking_mod.bake_selected_textures_async = _bake_selected_async
+    baking_mod.set_linked_group = lambda group, ref, usage: None
+    baking_mod.set_linked_group_common_parameters = lambda group, ref: None
+    baking_mod.unlink_all = lambda usage: None
+    baking_mod.unlink_all_common_parameters = lambda: None
+    baking_mod.get_link_group = lambda usage: []
+    baking_mod.get_link_group_common_parameters = lambda: []
+    baking_mod.get_linked_texture_sets = lambda ts, usage: [ts]
+    baking_mod.get_linked_texture_sets_common_parameters = lambda ts: [ts]
+
+    sp.baking = baking_mod
+    sys.modules["substance_painter.baking"] = baking_mod
+
+    # ── substance_painter.project extensions ──
+    class ProjectSaveMode(_Enum):
+        Full         = _Enum("Full")
+        Incremental  = _Enum("Incremental")
+
+    class NormalMapFormat(_Enum):
+        OpenGL  = _Enum("OpenGL")
+        DirectX = _Enum("DirectX")
+
+    class TangentSpace(_Enum):
+        PerVertex   = _Enum("PerVertex")
+        PerFragment = _Enum("PerFragment")
+
+    class ProjectWorkflow(_Enum):
+        Default             = _Enum("Default")
+        TextureSetPerUVTile = _Enum("TextureSetPerUVTile")
+        UVTile              = _Enum("UVTile")
+
+    project_mod.ProjectSaveMode = ProjectSaveMode
+    project_mod.NormalMapFormat = NormalMapFormat
+    project_mod.TangentSpace = TangentSpace
+    project_mod.ProjectWorkflow = ProjectWorkflow
+
+    class MockSettings:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    class MockUsdSettings:
+        def __init__(self):
+            self.scope_name = "/"
+            self.variants = None
+            self.subdivision_level = 1
+            self.frame = 0
+
+    class MockMeshReloadingSettings:
+        def __init__(self, import_cameras=True, preserve_strokes=True,
+                     usd_settings=None):
+            self.import_cameras = import_cameras
+            self.preserve_strokes = preserve_strokes
+            self.usd_settings = usd_settings
+
+    project_mod.Settings = MockSettings
+    project_mod.UsdSettings = MockUsdSettings
+    project_mod.MeshReloadingSettings = MockMeshReloadingSettings
+
+    _mock_project_state = {"is_open": True, "name": "MockProject",
+                           "path": "/mock/project.spp", "needs_saving": False}
+
+    def _project_create(mesh, maps, template, settings_dict):
+        _mock_project_state["is_open"] = True
+        _mock_project_state["name"] = "NewProject"
+    def _project_open(path):
+        _mock_project_state["is_open"] = True
+        _mock_project_state["path"] = path
+        _mock_project_state["name"] = "OpenedProject"
+    def _project_close():
+        _mock_project_state["is_open"] = False
+    def _project_is_open():
+        return _mock_project_state["is_open"]
+    def _project_needs_saving():
+        return _mock_project_state["needs_saving"]
+    def _project_name():
+        return _mock_project_state["name"]
+    def _project_file_path():
+        return _mock_project_state["path"]
+    def _project_reload_mesh(path, settings_dict, cb):
+        pass
+
+    project_mod.create = _project_create
+    project_mod.open = _project_open
+    project_mod.close = _project_close
+    project_mod.is_open = _project_is_open
+    project_mod.needs_saving = _project_needs_saving
+    project_mod.name = _project_name
+    project_mod.file_path = _project_file_path
+    project_mod.reload_mesh = _project_reload_mesh
+
+    # Metadata mock
+    class MockMetadata:
+        def __init__(self, context):
+            self._context = context
+            self._store = {}
+
+        @staticmethod
+        def _get_store():
+            if not hasattr(MockMetadata, '_global_store'):
+                MockMetadata._global_store = {}
+            return MockMetadata._global_store
+
+        def list(self):
+            store = self._get_store()
+            prefix = self._context + "/"
+            return [k[len(prefix):] for k in store
+                    if k.startswith(prefix)]
+
+        def get(self, key):
+            return self._get_store().get(self._context + "/" + key)
+
+        def set(self, key, value):
+            self._get_store()[self._context + "/" + key] = value
+
+    project_mod.Metadata = MockMetadata
+
+    # ── substance_painter.event (new mock) ──
+    event_mod = types.ModuleType("substance_painter.event")
+
+    class MockDispatcher:
+        def __init__(self):
+            self._callbacks = {}
+        def connect(self, event_cls, callback):
+            pass
+        def connect_strong(self, event_cls, callback):
+            pass
+        def disconnect(self, event_cls, callback):
+            pass
+        def _trigger(self, evt):
+            pass
+
+    event_mod.DISPATCHER = MockDispatcher()
+    event_mod.Dispatcher = MockDispatcher
+
+    # Event classes
+    for evt_name in ("ProjectOpened", "ProjectCreated", "ProjectAboutToClose",
+                     "ProjectAboutToSave", "ProjectSaved", "ProjectEditionEntered",
+                     "ProjectEditionLeft", "BusyStatusChanged",
+                     "BakingProcessAboutToStart", "BakingProcessProgress",
+                     "BakingProcessEnded", "ExportTexturesAboutToStart",
+                     "ExportTexturesEnded", "TextureStateEvent",
+                     "CameraPropertiesChanged", "LayerStacksModelDataChanged",
+                     "EngineComputationsStatusChanged",
+                     "ShelfCrawlingStarted", "ShelfCrawlingEnded"):
+        setattr(event_mod, evt_name, type(evt_name, (), {}))
+
+    sp.event = event_mod
+    sys.modules["substance_painter.event"] = event_mod
+
+    # ── UI mode switching mock ──
+    class UIMode(_Enum):
+        Edition       = _Enum("Edition")
+        Visualisation = _Enum("Visualisation")
+        Baking        = _Enum("Baking")
+    ui.UIMode = UIMode
+    ui.switch_to_mode = lambda mode: None
 
     return sp, layerstack
 

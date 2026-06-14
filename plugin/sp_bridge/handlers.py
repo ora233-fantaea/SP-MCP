@@ -1415,6 +1415,12 @@ def _find_layer(uid: str):
     root_nodes = ls.get_root_layer_nodes(stack)
     found = _search_nodes(root_nodes, uid)
     if found is None:
+        # Fallback: try node-by-uid lookup (for effect nodes, etc.)
+        try:
+            found = ls.get_node_by_uid(int(uid))
+        except Exception:
+            pass
+    if found is None:
         raise ValueError(f"Layer not found: {uid!r}")
     return found
 
@@ -2082,6 +2088,597 @@ def get_scene_bounding_box() -> dict:
     }
 
 
+# ── Phase 15: 效果节点 ──────────────────────────────────────────────────────────
+
+def _get_layer_node(layer_id: str, node_stack=None):
+    """Helper: 获取图层节点并返回插入位置所需信息。"""
+    node = _find_layer(layer_id)
+    node_type = type(node).__name__
+    if node_type not in ("FillLayerNode", "GroupLayerNode", "PaintLayerNode",
+                         "FillEffectNode", "GroupLayerNode"):
+        raise ValueError(
+            f"Layer {layer_id!r} (type={node_type}) does not support effects."
+        )
+    return node
+
+
+def _insert_effect(layer_id: str, effect_type: str, **kwargs):
+    """Helper: 在图层内部插入效果节点。"""
+    import substance_painter.layerstack as ls
+
+    node = _get_layer_node(layer_id)
+    # 在图层内容栈内部插入
+    pos = ls.InsertPosition.inside_node(node, ls.NodeStack.Content)
+
+    with _auto_batch(f"Add {effect_type}"):
+        if effect_type == "filter":
+            rid = kwargs.get("resource_id")
+            node = ls.insert_filter_effect(pos, rid)
+        elif effect_type == "generator":
+            rid = kwargs.get("resource_id")
+            node = ls.insert_generator_effect(pos, rid)
+        elif effect_type == "levels":
+            node = ls.insert_levels_effect(pos)
+        elif effect_type == "compare_mask":
+            pos = ls.InsertPosition.inside_node(node, ls.NodeStack.Mask)
+            node = ls.insert_compare_mask_effect(pos)
+        elif effect_type == "color_selection":
+            pos = ls.InsertPosition.inside_node(node, ls.NodeStack.Mask)
+            node = ls.insert_color_selection_effect(pos)
+        elif effect_type == "anchor_point":
+            pos = ls.InsertPosition.inside_node(node, ls.NodeStack.Content)
+            node = ls.insert_anchor_point_effect(pos, kwargs.get("name", "Anchor"))
+        else:
+            raise ValueError(f"Unknown effect type: {effect_type!r}")
+
+    _log_info(f"add_{effect_type}_effect layer={layer_id!r}")
+    return {"ok": True, "layer_id": layer_id, "effect_id": str(node.uid()),
+            "effect_type": effect_type}
+
+
+def add_filter_effect(layer_id: str, filter_name: str = None) -> dict:
+    """在图层上添加 Filter 效果。"""
+    import substance_painter.resource as r
+    rid = None
+    if filter_name:
+        resources = r.search(filter_name)
+        for res in resources:
+            if filter_name.lower() in res.gui_name().lower():
+                rid = res.identifier()
+                break
+        if rid is None:
+            raise ValueError(f"Filter resource not found: {filter_name!r}")
+    return _insert_effect(layer_id, "filter", resource_id=rid)
+
+
+def add_generator_effect(layer_id: str, generator_name: str = None) -> dict:
+    """在图层上添加 Generator 效果。"""
+    import substance_painter.resource as r
+    rid = None
+    if generator_name:
+        resources = r.search(generator_name)
+        for res in resources:
+            if generator_name.lower() in res.gui_name().lower():
+                rid = res.identifier()
+                break
+        if rid is None:
+            raise ValueError(f"Generator resource not found: {generator_name!r}")
+    return _insert_effect(layer_id, "generator", resource_id=rid)
+
+
+def add_levels_effect(layer_id: str) -> dict:
+    """在图层上添加 Levels 效果。"""
+    return _insert_effect(layer_id, "levels")
+
+
+def add_compare_mask_effect(layer_id: str) -> dict:
+    """在图层 Mask 栈中添加 Compare Mask 效果。"""
+    return _insert_effect(layer_id, "compare_mask")
+
+
+def add_color_selection_effect(layer_id: str) -> dict:
+    """在图层 Mask 栈中添加 Color Selection 效果。"""
+    return _insert_effect(layer_id, "color_selection")
+
+
+def add_anchor_point_effect(layer_id: str, anchor_name: str = "Anchor") -> dict:
+    """在图层上添加 Anchor Point 效果。"""
+    return _insert_effect(layer_id, "anchor_point", name=anchor_name)
+
+
+def get_effect_parameters(layer_id: str) -> dict:
+    """读取效果节点的参数。
+
+    支持: LevelsEffect, CompareMaskEffect, ColorSelectionEffect,
+          FilterEffect, GeneratorEffect
+    """
+    import substance_painter.layerstack as ls
+    import substance_painter.source as src_mod
+
+    node = _find_layer(layer_id)
+    node_type = type(node).__name__
+
+    result = {"layer_id": layer_id, "node_type": node_type}
+
+    if node_type == "LevelsEffectNode":
+        params = node.get_parameters()
+        ch = node.affected_channel
+        result["parameters"] = {
+            "affected_channel": ch.name if hasattr(ch, "name") else str(ch),
+            "levels": _serialize_levels_params(params),
+        }
+    elif node_type == "CompareMaskEffectNode":
+        params = node.get_parameters()
+        result["parameters"] = {
+            "channel": params.channel.name if hasattr(params.channel, "name") else str(params.channel),
+            "left_operand": params.left_operand.name,
+            "right_operand": params.right_operand.name,
+            "operation": params.operation.name,
+            "constant": params.constant,
+            "tolerance": params.tolerance,
+            "hardness": params.hardness,
+        }
+    elif node_type == "ColorSelectionEffectNode":
+        params = node.get_parameters()
+        result["parameters"] = {
+            "output_value": params.output_value,
+            "hardness": params.hardness,
+            "tolerance": params.tolerance,
+            "background_color": params.background_color.name,
+            "colors": [[c.value_raw[0], c.value_raw[1], c.value_raw[2]]
+                       for c in params.colors] if params.colors else [],
+        }
+        if params.id_mask:
+            result["parameters"]["id_mask"] = params.id_mask.url()
+    elif node_type in ("FilterEffectNode", "GeneratorEffectNode"):
+        try:
+            source = node.get_source()
+            if source is not None:
+                result["source"] = _serialize_source(source)
+        except Exception as e:
+            result["source_error"] = str(e)
+    else:
+        raise ValueError(
+            f"Layer {layer_id!r} (type={node_type}) is not a recognized effect node."
+        )
+
+    return result
+
+
+def _serialize_levels_params(params) -> dict:
+    """将 LevelsParams 序列化为 dict。"""
+    if hasattr(params, "mono"):
+        # LevelsParamsMono
+        m = params.mono
+        return {"mode": "mono", "in_low": m.in_low, "in_mid": m.in_mid,
+                "in_high": m.in_high, "out_low": m.out_low, "out_high": m.out_high,
+                "gamma": m.gamma, "clamp": m.clamp}
+    elif hasattr(params, "red"):
+        return {"mode": "rgb",
+                "red": {"in_low": params.red.in_low, "in_mid": params.red.in_mid,
+                        "in_high": params.red.in_high, "out_low": params.red.out_low,
+                        "out_high": params.red.out_high, "gamma": params.red.gamma,
+                        "clamp": params.red.clamp},
+                "green": {"in_low": params.green.in_low, "in_mid": params.green.in_mid,
+                          "in_high": params.green.in_high, "out_low": params.green.out_low,
+                          "out_high": params.green.out_high, "gamma": params.green.gamma,
+                          "clamp": params.green.clamp},
+                "blue": {"in_low": params.blue.in_low, "in_mid": params.blue.in_mid,
+                         "in_high": params.blue.in_high, "out_low": params.blue.out_low,
+                         "out_high": params.blue.out_high, "gamma": params.blue.gamma,
+                         "clamp": params.blue.clamp}}
+    return {"mode": "unknown"}
+
+
+def get_selected_nodes(texture_set_name: str = None) -> dict:
+    """获取当前选中的节点列表。"""
+    import substance_painter.textureset as ts_mod
+    import substance_painter.layerstack as ls
+
+    if texture_set_name:
+        texture_set = ts_mod.TextureSet.from_name(texture_set_name)
+        stack = texture_set.get_stack()
+    else:
+        stack = ts_mod.get_active_stack()
+
+    nodes = ls.get_selected_nodes(stack)
+    result = []
+    for node in nodes:
+        info = {"id": str(node.uid()), "name": node.get_name(),
+                "type": type(node).__name__}
+        result.append(info)
+
+    return {"nodes": result, "count": len(result)}
+
+
+def set_selected_nodes(node_ids: list) -> dict:
+    """设置选中节点。"""
+    import substance_painter.layerstack as ls
+
+    nodes = [_find_layer(lid) for lid in node_ids]
+    ls.set_selected_nodes(nodes)
+
+    return {"ok": True, "selected": [str(n.uid()) for n in nodes]}
+
+
+# ── Phase 16: 烘焙 API ──────────────────────────────────────────────────────────
+
+
+def get_baking_parameters(texture_set_name: str) -> dict:
+    """读取纹理集的烘焙参数。"""
+    import substance_painter.baking as baking
+
+    bp = baking.BakingParameters.from_texture_set_name(texture_set_name)
+    common = bp.common()
+    result = {
+        "texture_set": texture_set_name,
+        "common": {},
+        "bakers": {},
+        "curvature_method": bp.get_curvature_method().name,
+        "textureset_enabled": bp.is_textureset_enabled(),
+    }
+
+    # 序列化 common 参数
+    for name, prop in common.items():
+        try:
+            pv = prop.value()
+            result["common"][name] = _serialize_property_value(pv)
+        except Exception:
+            result["common"][name] = str(prop)
+
+    # 序列化各 baker 参数
+    import substance_painter.textureset as ts_mod
+    for map_usage in ts_mod.MeshMapUsage:
+        try:
+            baker_params = bp.baker(map_usage)
+            if baker_params:
+                result["bakers"][map_usage.name] = {}
+                for name, prop in baker_params.items():
+                    try:
+                        pv = prop.value()
+                        result["bakers"][map_usage.name][name] = _serialize_property_value(pv)
+                    except Exception:
+                        result["bakers"][map_usage.name][name] = str(prop)
+        except Exception:
+            pass
+
+    # 启用的 bakers
+    try:
+        enabled = bp.get_enabled_bakers()
+        result["enabled_bakers"] = [e.name for e in enabled]
+    except Exception:
+        result["enabled_bakers"] = []
+
+    # 启用的 UV tiles
+    try:
+        tiles = bp.get_enabled_uv_tiles()
+        result["enabled_uv_tiles"] = [{"u": t.u, "v": t.v} for t in tiles]
+    except Exception:
+        pass
+
+    return result
+
+
+def set_baking_parameters(texture_set_name: str,
+                          common_params: dict = None,
+                          baker_params: dict = None) -> dict:
+    """设置烘焙参数。
+
+    common_params: {"OutputSize": [4096, 4096], "HipolyMesh": "file:///..."}
+    baker_params: {"AO": {"Distribution": "Cosine"}, "Curvature": {...}}
+    """
+    import substance_painter.baking as baking
+    import substance_painter.textureset as ts_mod
+    import substance_painter.properties as sprop
+
+    bp = baking.BakingParameters.from_texture_set_name(texture_set_name)
+    updates = {}
+
+    if common_params:
+        common = bp.common()
+        for name, value in common_params.items():
+            for prop_name, prop in common.items():
+                if prop_name.lower() == name.lower():
+                    updates[prop] = sprop.PropertyValue(value)
+                    break
+
+    if baker_params:
+        for usage_name, params_dict in baker_params.items():
+            try:
+                usage = getattr(ts_mod.MeshMapUsage, usage_name)
+                baker = bp.baker(usage)
+                for name, value in params_dict.items():
+                    for prop_name, prop in baker.items():
+                        if prop_name.lower() == name.lower():
+                            updates[prop] = sprop.PropertyValue(value)
+                            break
+            except Exception as e:
+                raise ValueError(
+                    f"Invalid baker usage {usage_name!r}: {e}"
+                ) from e
+
+    if updates:
+        with _auto_batch("Set baking parameters"):
+            baking.BakingParameters.set(updates)
+
+    _log_info(
+        f"set_baking_parameters ts={texture_set_name!r} "
+        f"keys={list(updates.keys())}"
+    )
+    return {"ok": True, "texture_set": texture_set_name,
+            "updated_count": len(updates)}
+
+
+def bake_texture_set(texture_set_name: str) -> dict:
+    """异步启动纹理集烘焙。"""
+    import substance_painter.baking as baking
+    import substance_painter.textureset as ts_mod
+
+    texture_set = ts_mod.TextureSet.from_name(texture_set_name)
+    stop_source = baking.bake_async(texture_set)
+
+    _log_info(f"bake_texture_set: {texture_set_name!r}")
+    return {"ok": True, "texture_set": texture_set_name,
+            "message": "Baking started asynchronously. "
+                       "Monitor progress via BakingProcessEnded event."}
+
+
+def get_baking_state(texture_set_name: str) -> dict:
+    """获取烘焙状态（启用/禁用状态，链接信息）。"""
+    import substance_painter.baking as baking
+    import substance_painter.textureset as ts_mod
+
+    bp = baking.BakingParameters.from_texture_set_name(texture_set_name)
+    ts = ts_mod.TextureSet.from_name(texture_set_name)
+
+    result = {
+        "texture_set": texture_set_name,
+        "textureset_enabled": bp.is_textureset_enabled(),
+        "curvature_method": bp.get_curvature_method().name,
+        "enabled_bakers": [e.name for e in bp.get_enabled_bakers()],
+    }
+
+    # 获取链接信息
+    for map_usage in ts_mod.MeshMapUsage:
+        try:
+            linked = baking.get_linked_texture_sets(ts, map_usage)
+            if len(linked) > 1:
+                result.setdefault("linked_groups", {})
+                result["linked_groups"][map_usage.name] = [t.name() for t in linked]
+        except Exception:
+            pass
+
+    try:
+        tiles = bp.get_enabled_uv_tiles()
+        result["enabled_uv_tiles"] = [{"u": t.u, "v": t.v} for t in tiles]
+    except Exception:
+        pass
+
+    return result
+
+
+def set_baking_state(texture_set_name: str,
+                     enabled: bool = None,
+                     curvature_method: str = None,
+                     enabled_bakers: list = None,
+                     enabled_uv_tiles: list = None) -> dict:
+    """设置烘焙状态（启用/禁用纹理集/bakers/UV tiles，曲率方法）。"""
+    import substance_painter.baking as baking
+    import substance_painter.textureset as ts_mod
+
+    bp = baking.BakingParameters.from_texture_set_name(texture_set_name)
+    ts = ts_mod.TextureSet.from_name(texture_set_name)
+    changed = []
+
+    if enabled is not None:
+        bp.set_textureset_enabled(enabled)
+        changed.append(f"textureset_enabled={enabled}")
+
+    if curvature_method:
+        valid_methods = {"FromMesh": baking.CurvatureMethod.FromMesh,
+                         "FromNormalMap": baking.CurvatureMethod.FromNormalMap}
+        if curvature_method not in valid_methods:
+            raise ValueError(
+                f"Unknown curvature method: {curvature_method!r}. "
+                f"Valid: {list(valid_methods.keys())}"
+            )
+        bp.set_curvature_method(valid_methods[curvature_method])
+        changed.append(f"curvature_method={curvature_method}")
+
+    if enabled_bakers is not None:
+        usages = [getattr(ts_mod.MeshMapUsage, u) for u in enabled_bakers]
+        bp.set_enabled_bakers(usages)
+        changed.append(f"enabled_bakers={enabled_bakers}")
+
+    if enabled_uv_tiles is not None:
+        tiles = [ts.uv_tile(t["u"], t["v"]) for t in enabled_uv_tiles]
+        bp.set_enabled_uv_tiles(tiles)
+        changed.append(f"enabled_uv_tiles={enabled_uv_tiles}")
+
+    _log_info(f"set_baking_state ts={texture_set_name!r} {', '.join(changed)}")
+    return {"ok": True, "texture_set": texture_set_name, "changed": changed}
+
+
+# ── Phase 17: 项目生命周期 ──────────────────────────────────────────────────────
+
+
+def create_project(mesh_file_path: str,
+                   mesh_map_file_paths: list = None,
+                   normal_map_format: str = "OpenGL",
+                   tangent_space_mode: str = "PerFragment",
+                   project_workflow: str = "Default",
+                   import_cameras: bool = False,
+                   default_texture_resolution: int = 2048,
+                   mesh_unit_scale: float = None) -> dict:
+    """创建新项目。
+
+    仅在不处于 edition state 时可用（即需要先关闭当前项目）。
+    """
+    import substance_painter.project as project
+
+    if project.is_open():
+        raise RuntimeError(
+            "A project is already open. Call close_project() first before creating a new one."
+        )
+
+    nmf_map = {"OpenGL": project.NormalMapFormat.OpenGL,
+               "DirectX": project.NormalMapFormat.DirectX}
+    ts_map = {"PerVertex": project.TangentSpace.PerVertex,
+              "PerFragment": project.TangentSpace.PerFragment}
+    pw_map = {"Default": project.ProjectWorkflow.Default,
+              "TextureSetPerUVTile": project.ProjectWorkflow.TextureSetPerUVTile,
+              "UVTile": project.ProjectWorkflow.UVTile}
+
+    if normal_map_format not in nmf_map:
+        raise ValueError(
+            f"Unknown normal_map_format: {normal_map_format!r}. "
+            f"Valid: {list(nmf_map.keys())}"
+        )
+    if tangent_space_mode not in ts_map:
+        raise ValueError(
+            f"Unknown tangent_space_mode: {tangent_space_mode!r}. "
+            f"Valid: {list(ts_map.keys())}"
+        )
+    if project_workflow not in pw_map:
+        raise ValueError(
+            f"Unknown project_workflow: {project_workflow!r}. "
+            f"Valid: {list(pw_map.keys())}"
+        )
+
+    settings = project.Settings(
+        normal_map_format=nmf_map[normal_map_format],
+        tangent_space_mode=ts_map[tangent_space_mode],
+        project_workflow=pw_map[project_workflow],
+        import_cameras=import_cameras,
+        default_texture_resolution=default_texture_resolution,
+        mesh_unit_scale=mesh_unit_scale,
+    )
+
+    project.create(
+        mesh_file_path=mesh_file_path,
+        mesh_map_file_paths=mesh_map_file_paths or [],
+        settings=settings,
+    )
+
+    _log_info(f"create_project: {mesh_file_path!r}")
+    return {"ok": True, "mesh_file_path": mesh_file_path,
+            "name": project.name()}
+
+
+def open_project(file_path: str) -> dict:
+    """打开已有 .spp 项目。"""
+    import substance_painter.project as project
+
+    project.open(file_path)
+
+    _log_info(f"open_project: {file_path!r}")
+    return {"ok": True, "file_path": file_path, "name": project.name()}
+
+
+def close_project() -> dict:
+    """关闭当前项目（不保存）。"""
+    import substance_painter.project as project
+
+    if not project.is_open():
+        return {"ok": True, "message": "No project was open."}
+
+    project.close()
+    _log_info("close_project")
+    return {"ok": True, "message": "Project closed."}
+
+
+def reload_mesh(mesh_file_path: str,
+                import_cameras: bool = True,
+                preserve_strokes: bool = True) -> dict:
+    """异步重载网格。"""
+    import substance_painter.project as project
+
+    settings = project.MeshReloadingSettings(
+        import_cameras=import_cameras,
+        preserve_strokes=preserve_strokes,
+    )
+
+    # 使用同步 wrapper: 通过事件循环等待完成
+    project.reload_mesh(
+        mesh_file_path=mesh_file_path,
+        settings=settings,
+        loading_status_cb=lambda status: None,  # 简化: 不等待回调
+    )
+
+    _log_info(f"reload_mesh: {mesh_file_path!r}")
+    return {"ok": True, "mesh_file_path": mesh_file_path,
+            "message": "Mesh reload initiated. Check ProjectEditionEntered event for completion."}
+
+
+def get_project_metadata(context: str, key: str) -> dict:
+    """读取项目元数据。"""
+    import substance_painter.project as project
+
+    metadata = project.Metadata(context)
+    value = metadata.get(key)
+
+    return {"context": context, "key": key, "value": value}
+
+
+def set_project_metadata(context: str, key: str, value) -> dict:
+    """写入项目元数据。"""
+    import substance_painter.project as project
+
+    metadata = project.Metadata(context)
+    metadata.set(key, value)
+
+    _log_info(f"set_project_metadata: {context}/{key}")
+    return {"ok": True, "context": context, "key": key}
+
+
+def list_project_metadata(context: str) -> dict:
+    """列出某 context 下所有元数据键。"""
+    import substance_painter.project as project
+
+    metadata = project.Metadata(context)
+    keys = metadata.list()
+
+    return {"context": context, "keys": keys}
+
+
+def list_resources_by_usage(usage: str, search: str = "") -> dict:
+    """按用途类型列出资源（FILTER, GENERATOR, SUBSTANCE, SMART_MATERIAL 等）。
+
+    usage: 资源用途，如 "filter", "generator", "substance", "smart_material"
+    """
+    import substance_painter.resource as r
+
+    usage_map = {
+        "filter": r.Usage.FILTER,
+        "generator": r.Usage.GENERATOR,
+        "substance": r.Usage.SUBSTANCE,
+        "smart_material": r.Usage.SMART_MATERIAL,
+        "smart_mask": r.Usage.SMART_MASK,
+        "texture": r.Usage.TEXTURE,
+        "environment": r.Usage.ENVIRONMENT,
+        "export_preset": r.Usage.EXPORT_PRESET,
+    }
+
+    usage_lower = usage.lower()
+    if usage_lower not in usage_map:
+        raise ValueError(
+            f"Unknown usage: {usage!r}. Valid: {sorted(usage_map.keys())}"
+        )
+
+    target_usage = usage_map[usage_lower]
+    all_resources = r.search(search) if search else r.search("")
+    result = []
+    for res in all_resources:
+        try:
+            if res.type() == target_usage:
+                result.append(res.gui_name())
+        except Exception:
+            pass
+
+    return {"usage": usage, "search": search, "resources": result,
+            "count": len(result)}
+
+
 # ── 方法注册表 ────────────────────────────────────────────────────────────────
 
 _REGISTRY: dict = {
@@ -2163,4 +2760,29 @@ _REGISTRY: dict = {
     "get_color_lut":            get_color_lut,
     "set_color_lut":            set_color_lut,
     "get_scene_bounding_box":   get_scene_bounding_box,
+    # Phase 15 — effect nodes
+    "add_filter_effect":        add_filter_effect,
+    "add_generator_effect":     add_generator_effect,
+    "add_levels_effect":        add_levels_effect,
+    "add_compare_mask_effect":  add_compare_mask_effect,
+    "add_color_selection_effect": add_color_selection_effect,
+    "add_anchor_point_effect":  add_anchor_point_effect,
+    "get_effect_parameters":    get_effect_parameters,
+    "get_selected_nodes":       get_selected_nodes,
+    "set_selected_nodes":       set_selected_nodes,
+    # Phase 16 — baking
+    "get_baking_parameters":    get_baking_parameters,
+    "set_baking_parameters":    set_baking_parameters,
+    "bake_texture_set":         bake_texture_set,
+    "get_baking_state":         get_baking_state,
+    "set_baking_state":         set_baking_state,
+    # Phase 17 — project lifecycle
+    "create_project":           create_project,
+    "open_project":             open_project,
+    "close_project":            close_project,
+    "reload_mesh":              reload_mesh,
+    "get_project_metadata":     get_project_metadata,
+    "set_project_metadata":     set_project_metadata,
+    "list_project_metadata":    list_project_metadata,
+    "list_resources_by_usage":  list_resources_by_usage,
 }

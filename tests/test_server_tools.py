@@ -114,6 +114,52 @@ def mock_bridge(monkeypatch):
             "get_scene_bounding_box":    {"dimensions": [10.0, 10.0, 10.0],
                                           "center": [0.0, 0.0, 0.0],
                                           "radius": 8.66},
+            # Phase 15: Effect Nodes
+            "add_filter_effect":        {"ok": True, "layer_id": "1", "effect_id": "101",
+                                         "effect_type": "filter"},
+            "add_generator_effect":     {"ok": True, "layer_id": "1", "effect_id": "102",
+                                         "effect_type": "generator"},
+            "add_levels_effect":        {"ok": True, "layer_id": "1", "effect_id": "103",
+                                         "effect_type": "levels"},
+            "add_compare_mask_effect":  {"ok": True, "layer_id": "1", "effect_id": "104",
+                                         "effect_type": "compare_mask"},
+            "add_color_selection_effect": {"ok": True, "layer_id": "1", "effect_id": "105",
+                                           "effect_type": "color_selection"},
+            "add_anchor_point_effect":  {"ok": True, "layer_id": "1", "effect_id": "106",
+                                         "effect_type": "anchor_point"},
+            "get_effect_parameters":    {"layer_id": "103", "node_type": "LevelsEffectNode",
+                                         "parameters": {"affected_channel": "BaseColor",
+                                                        "levels": {"mode": "mono"}}},
+            "get_selected_nodes":       {"nodes": [{"id": "1", "name": "Layer", "type": "FillLayerNode"}],
+                                         "count": 1},
+            "set_selected_nodes":       {"ok": True, "selected": ["1", "2"]},
+            # Phase 16: Baking
+            "get_baking_parameters":    {"texture_set": "Default", "common": {},
+                                         "bakers": {}, "curvature_method": "FromMesh",
+                                         "textureset_enabled": True},
+            "set_baking_parameters":    {"ok": True, "texture_set": "Default",
+                                         "updated_count": 1},
+            "bake_texture_set":         {"ok": True, "texture_set": "Default",
+                                         "message": "Baking started asynchronously."},
+            "get_baking_state":         {"texture_set": "Default",
+                                         "textureset_enabled": True,
+                                         "curvature_method": "FromMesh",
+                                         "enabled_bakers": ["AO", "Normal"]},
+            "set_baking_state":         {"ok": True, "texture_set": "Default",
+                                         "changed": ["curvature_method=FromNormalMap"]},
+            # Phase 17: Project Lifecycle
+            "create_project":           {"ok": True, "mesh_file_path": "/mock/mesh.fbx",
+                                         "name": "NewProject"},
+            "open_project":             {"ok": True, "file_path": "/mock/project.spp",
+                                         "name": "OpenedProject"},
+            "close_project":            {"ok": True, "message": "Project closed."},
+            "reload_mesh":              {"ok": True, "mesh_file_path": "/mock/new_mesh.fbx",
+                                         "message": "Mesh reload initiated."},
+            "get_project_metadata":     {"context": "test", "key": "version", "value": 42},
+            "set_project_metadata":     {"ok": True, "context": "test", "key": "version"},
+            "list_project_metadata":    {"context": "test", "keys": ["version", "author"]},
+            "list_resources_by_usage":  {"usage": "filter", "search": "",
+                                         "resources": ["Blur", "Sharpen"], "count": 2},
         }
         if method not in responses:
             raise ValueError(f"Unknown method in mock: {method}")
@@ -671,6 +717,189 @@ class TestCameraDisplayTools:
         assert set(result.keys()) == {"dimensions", "center", "radius"}
         assert len(result["dimensions"]) == 3
         assert len(result["center"]) == 3
+
+
+# ---------------------------------------------------------------------------
+# Phase 15: Effect Node Tools
+# ---------------------------------------------------------------------------
+
+class TestEffectNodeTools:
+    """sp_add_filter_effect / sp_add_generator_effect / sp_add_levels_effect /
+       sp_add_compare_mask_effect / sp_add_color_selection_effect /
+       sp_add_anchor_point_effect / sp_get_effect_parameters /
+       sp_get_selected_nodes / sp_set_selected_nodes"""
+
+    def test_sp_add_filter_effect(self, mock_bridge):
+        from server.sp_mcp import sp_add_filter_effect
+        result = sp_add_filter_effect(layer_id="1")
+        assert result["ok"] is True
+        assert result["effect_type"] == "filter"
+
+    def test_sp_add_filter_effect_empty_layer_raises(self, mock_bridge):
+        from server.sp_mcp import sp_add_filter_effect
+        with pytest.raises(ValueError, match="layer_id must not be empty"):
+            sp_add_filter_effect(layer_id="")
+
+    def test_sp_add_generator_effect(self, mock_bridge):
+        from server.sp_mcp import sp_add_generator_effect
+        result = sp_add_generator_effect(layer_id="1")
+        assert result["ok"] is True
+
+    def test_sp_add_levels_effect(self, mock_bridge):
+        from server.sp_mcp import sp_add_levels_effect
+        result = sp_add_levels_effect(layer_id="1")
+        assert result["ok"] is True
+
+    def test_sp_add_compare_mask_effect(self, mock_bridge):
+        from server.sp_mcp import sp_add_compare_mask_effect
+        result = sp_add_compare_mask_effect(layer_id="1")
+        assert result["ok"] is True
+
+    def test_sp_add_color_selection_effect(self, mock_bridge):
+        from server.sp_mcp import sp_add_color_selection_effect
+        result = sp_add_color_selection_effect(layer_id="1")
+        assert result["ok"] is True
+
+    def test_sp_add_anchor_point_effect(self, mock_bridge):
+        from server.sp_mcp import sp_add_anchor_point_effect
+        result = sp_add_anchor_point_effect(layer_id="1", anchor_name="Test")
+        assert result["ok"] is True
+
+    def test_sp_get_effect_parameters(self, mock_bridge):
+        from server.sp_mcp import sp_get_effect_parameters
+        result = sp_get_effect_parameters(layer_id="103")
+        assert "node_type" in result
+
+    def test_sp_get_selected_nodes(self, mock_bridge):
+        from server.sp_mcp import sp_get_selected_nodes
+        result = sp_get_selected_nodes()
+        assert "nodes" in result
+
+    def test_sp_set_selected_nodes(self, mock_bridge):
+        from server.sp_mcp import sp_set_selected_nodes
+        result = sp_set_selected_nodes(node_ids=["1", "2"])
+        assert result["ok"] is True
+
+    def test_sp_set_selected_nodes_empty_raises(self, mock_bridge):
+        from server.sp_mcp import sp_set_selected_nodes
+        with pytest.raises(ValueError, match="node_ids must be a non-empty list"):
+            sp_set_selected_nodes(node_ids=[])
+
+
+# ---------------------------------------------------------------------------
+# Phase 16: Baking Tools
+# ---------------------------------------------------------------------------
+
+class TestBakingTools:
+    """sp_get_baking_parameters / sp_set_baking_parameters / sp_bake_texture_set /
+       sp_get_baking_state / sp_set_baking_state"""
+
+    def test_sp_get_baking_parameters(self, mock_bridge):
+        from server.sp_mcp import sp_get_baking_parameters
+        result = sp_get_baking_parameters(texture_set_name="Default")
+        assert result["texture_set"] == "Default"
+
+    def test_sp_get_baking_parameters_empty_ts_raises(self, mock_bridge):
+        from server.sp_mcp import sp_get_baking_parameters
+        with pytest.raises(ValueError, match="texture_set_name must not be empty"):
+            sp_get_baking_parameters(texture_set_name="")
+
+    def test_sp_set_baking_parameters(self, mock_bridge):
+        from server.sp_mcp import sp_set_baking_parameters
+        result = sp_set_baking_parameters(
+            texture_set_name="Default", common_params={"OutputSize": [2048, 2048]}
+        )
+        assert result["ok"] is True
+
+    def test_sp_bake_texture_set(self, mock_bridge):
+        from server.sp_mcp import sp_bake_texture_set
+        result = sp_bake_texture_set(texture_set_name="Default")
+        assert result["ok"] is True
+
+    def test_sp_get_baking_state(self, mock_bridge):
+        from server.sp_mcp import sp_get_baking_state
+        result = sp_get_baking_state(texture_set_name="Default")
+        assert "enabled_bakers" in result
+
+    def test_sp_set_baking_state(self, mock_bridge):
+        from server.sp_mcp import sp_set_baking_state
+        result = sp_set_baking_state(
+            texture_set_name="Default", curvature_method="FromNormalMap"
+        )
+        assert result["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 17: Project Lifecycle Tools
+# ---------------------------------------------------------------------------
+
+class TestProjectLifecycleTools:
+    """sp_create_project / sp_open_project / sp_close_project / sp_reload_mesh /
+       sp_get_project_metadata / sp_set_project_metadata / sp_list_project_metadata"""
+
+    def test_sp_create_project(self, mock_bridge):
+        from server.sp_mcp import sp_create_project
+        result = sp_create_project(mesh_file_path="/mock/mesh.fbx")
+        assert result["ok"] is True
+
+    def test_sp_create_project_empty_mesh_raises(self, mock_bridge):
+        from server.sp_mcp import sp_create_project
+        with pytest.raises(ValueError, match="mesh_file_path must not be empty"):
+            sp_create_project(mesh_file_path="")
+
+    def test_sp_open_project(self, mock_bridge):
+        from server.sp_mcp import sp_open_project
+        result = sp_open_project(file_path="/mock/project.spp")
+        assert result["ok"] is True
+
+    def test_sp_open_project_empty_raises(self, mock_bridge):
+        from server.sp_mcp import sp_open_project
+        with pytest.raises(ValueError, match="file_path must not be empty"):
+            sp_open_project(file_path="")
+
+    def test_sp_close_project(self, mock_bridge):
+        from server.sp_mcp import sp_close_project
+        result = sp_close_project()
+        assert result["ok"] is True
+
+    def test_sp_reload_mesh(self, mock_bridge):
+        from server.sp_mcp import sp_reload_mesh
+        result = sp_reload_mesh(mesh_file_path="/mock/new_mesh.fbx")
+        assert result["ok"] is True
+
+    def test_sp_get_project_metadata(self, mock_bridge):
+        from server.sp_mcp import sp_get_project_metadata
+        result = sp_get_project_metadata(context="test", key="version")
+        assert "value" in result
+
+    def test_sp_set_project_metadata(self, mock_bridge):
+        from server.sp_mcp import sp_set_project_metadata
+        result = sp_set_project_metadata(context="test", key="k", value="v")
+        assert result["ok"] is True
+
+    def test_sp_list_project_metadata(self, mock_bridge):
+        from server.sp_mcp import sp_list_project_metadata
+        result = sp_list_project_metadata(context="test")
+        assert "keys" in result
+
+
+# ---------------------------------------------------------------------------
+# Phase 17b: Resource Tools
+# ---------------------------------------------------------------------------
+
+class TestResourceUsageTools:
+    """sp_list_resources_by_usage"""
+
+    def test_sp_list_resources_by_usage(self, mock_bridge):
+        from server.sp_mcp import sp_list_resources_by_usage
+        result = sp_list_resources_by_usage(usage="filter")
+        assert result["usage"] == "filter"
+        assert isinstance(result["resources"], list)
+
+    def test_sp_list_resources_by_usage_empty_raises(self, mock_bridge):
+        from server.sp_mcp import sp_list_resources_by_usage
+        with pytest.raises(ValueError, match="usage must not be empty"):
+            sp_list_resources_by_usage(usage="")
 
 
 # ---------------------------------------------------------------------------

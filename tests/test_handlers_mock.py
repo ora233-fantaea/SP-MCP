@@ -1386,3 +1386,197 @@ class TestGetSceneBoundingBox:
     def test_dimensions_are_three_elements(self, fresh_layer_stack):
         result = handlers.get_scene_bounding_box()
         assert len(result["dimensions"]) == 3
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 15: Effect Nodes
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestAddFilterEffect:
+    def test_returns_effect_id(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("FilterTest")
+        result = handlers.add_filter_effect(r["id"])
+        assert result["ok"] is True
+        assert result["effect_type"] == "filter"
+        assert "effect_id" in result
+
+    def test_invalid_layer_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="not found"):
+            handlers.add_filter_effect("99999")
+
+
+class TestAddGeneratorEffect:
+    def test_returns_effect_id(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("GenTest")
+        result = handlers.add_generator_effect(r["id"])
+        assert result["ok"] is True
+        assert result["effect_type"] == "generator"
+
+
+class TestAddLevelsEffect:
+    def test_returns_effect_id(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("LevelsTest")
+        result = handlers.add_levels_effect(r["id"])
+        assert result["ok"] is True
+        assert result["effect_type"] == "levels"
+
+
+class TestAddCompareMaskEffect:
+    def test_returns_effect_id(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("CompareTest")
+        result = handlers.add_compare_mask_effect(r["id"])
+        assert result["ok"] is True
+        assert result["effect_type"] == "compare_mask"
+
+
+class TestAddColorSelectionEffect:
+    def test_returns_effect_id(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("ColorSelTest")
+        result = handlers.add_color_selection_effect(r["id"])
+        assert result["ok"] is True
+        assert result["effect_type"] == "color_selection"
+
+
+class TestAddAnchorPointEffect:
+    def test_returns_effect_id(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("AnchorTest")
+        result = handlers.add_anchor_point_effect(r["id"], "MyAnchor")
+        assert result["ok"] is True
+        assert result["effect_type"] == "anchor_point"
+
+    def test_default_name(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("AnchorDefault")
+        result = handlers.add_anchor_point_effect(r["id"])
+        assert result["ok"] is True
+
+
+class TestGetEffectParameters:
+    def test_levels_effect(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("LevelsParamsTest")
+        handlers.add_levels_effect(r["id"])
+        # Get effect params via the effect_id
+        eff = handlers.add_levels_effect(r["id"])
+        result = handlers.get_effect_parameters(eff["effect_id"])
+        assert result["node_type"] == "LevelsEffectNode"
+        assert "parameters" in result
+
+    def test_invalid_node_raises(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("NotEffect")
+        with pytest.raises(ValueError, match="not a recognized effect node"):
+            handlers.get_effect_parameters(r["id"])
+
+
+class TestGetSelectedNodes:
+    def test_returns_list(self, fresh_layer_stack):
+        result = handlers.get_selected_nodes()
+        assert "nodes" in result
+        assert "count" in result
+        assert isinstance(result["nodes"], list)
+
+
+class TestSetSelectedNodes:
+    def test_returns_ok(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("SelTest")
+        result = handlers.set_selected_nodes([r["id"]])
+        assert result["ok"] is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 16: Baking API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestGetBakingParameters:
+    def test_returns_dict(self, fresh_layer_stack):
+        result = handlers.get_baking_parameters("Default")
+        assert result["texture_set"] == "Default"
+        assert "common" in result
+        assert "bakers" in result
+        assert "curvature_method" in result
+
+    def test_has_curvature_method(self, fresh_layer_stack):
+        result = handlers.get_baking_parameters("Default")
+        assert result["curvature_method"] in ("FromMesh", "FromNormalMap")
+
+
+class TestSetBakingParameters:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.set_baking_parameters(
+            "Default", common_params={"OutputSize": [2048, 2048]}
+        )
+        assert result["ok"] is True
+
+
+class TestBakeTextureSet:
+    def test_returns_ok(self, fresh_layer_stack):
+        result = handlers.bake_texture_set("Default")
+        assert result["ok"] is True
+        assert "started" in result["message"].lower()
+
+
+class TestGetBakingState:
+    def test_returns_dict(self, fresh_layer_stack):
+        result = handlers.get_baking_state("Default")
+        assert result["texture_set"] == "Default"
+        assert "textureset_enabled" in result
+        assert "enabled_bakers" in result
+
+    def test_enabled_bakers_is_list(self, fresh_layer_stack):
+        result = handlers.get_baking_state("Default")
+        assert isinstance(result["enabled_bakers"], list)
+
+
+class TestSetBakingState:
+    def test_enable_textureset(self, fresh_layer_stack):
+        result = handlers.set_baking_state("Default", enabled=True)
+        assert result["ok"] is True
+
+    def test_set_curvature_method(self, fresh_layer_stack):
+        result = handlers.set_baking_state("Default", curvature_method="FromNormalMap")
+        assert result["ok"] is True
+
+    def test_invalid_curvature_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="Unknown curvature method"):
+            handlers.set_baking_state("Default", curvature_method="InvalidMethod")
+
+    def test_set_enabled_bakers(self, fresh_layer_stack):
+        result = handlers.set_baking_state(
+            "Default", enabled_bakers=["AO", "Normal"]
+        )
+        assert result["ok"] is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 17: Project Lifecycle
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestProjectLifecycle:
+    def test_get_project_metadata(self, fresh_layer_stack):
+        handlers.set_project_metadata("TestCtx", "version", 42)
+        result = handlers.get_project_metadata("TestCtx", "version")
+        assert result["value"] == 42
+
+    def test_set_project_metadata(self, fresh_layer_stack):
+        result = handlers.set_project_metadata("TestCtx", "key1", "hello")
+        assert result["ok"] is True
+
+    def test_list_project_metadata(self, fresh_layer_stack):
+        handlers.set_project_metadata("ListCtx", "a", 1)
+        handlers.set_project_metadata("ListCtx", "b", 2)
+        result = handlers.list_project_metadata("ListCtx")
+        assert "a" in result["keys"]
+        assert "b" in result["keys"]
+
+
+class TestListResourcesByUsage:
+    def test_returns_dict(self, fresh_layer_stack):
+        result = handlers.list_resources_by_usage("filter")
+        assert result["usage"] == "filter"
+        assert "resources" in result
+        assert isinstance(result["resources"], list)
+
+    def test_invalid_usage_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="Unknown usage"):
+            handlers.list_resources_by_usage("nonexistent")

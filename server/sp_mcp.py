@@ -1056,6 +1056,360 @@ def sp_get_scene_bounding_box() -> dict:
     return sp.call("get_scene_bounding_box")
 
 
+# ── Phase 15: 效果节点 ──────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def sp_add_filter_effect(layer_id: str, filter_name: str = None) -> dict:
+    """
+    在图层上添加 Filter 效果。
+
+    filter_name  模糊搜索的 filter 资源名。不指定则创建空 filter。
+    返回 effect_id 用于后续参数获取/设置。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    kwargs = {"layer_id": layer_id}
+    if filter_name:
+        kwargs["filter_name"] = filter_name
+    return sp.call("add_filter_effect", kwargs)
+
+
+@mcp.tool()
+def sp_add_generator_effect(layer_id: str, generator_name: str = None) -> dict:
+    """
+    在图层上添加 Generator 效果。
+
+    generator_name  模糊搜索的 generator 资源名。不指定则创建空 generator。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    kwargs = {"layer_id": layer_id}
+    if generator_name:
+        kwargs["generator_name"] = generator_name
+    return sp.call("add_generator_effect", kwargs)
+
+
+@mcp.tool()
+def sp_add_levels_effect(layer_id: str) -> dict:
+    """
+    在图层上添加 Levels 效果。
+
+    用于调整通道的色阶（输入/输出范围、gamma、clamp）。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("add_levels_effect", {"layer_id": layer_id})
+
+
+@mcp.tool()
+def sp_add_compare_mask_effect(layer_id: str) -> dict:
+    """
+    在图层 Mask 栈中添加 Compare Mask 效果。
+
+    用于基于通道比较创建遮罩。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("add_compare_mask_effect", {"layer_id": layer_id})
+
+
+@mcp.tool()
+def sp_add_color_selection_effect(layer_id: str) -> dict:
+    """
+    在图层 Mask 栈中添加 Color Selection 效果。
+
+    用于基于 ID Mask 颜色选择创建遮罩。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("add_color_selection_effect", {"layer_id": layer_id})
+
+
+@mcp.tool()
+def sp_add_anchor_point_effect(layer_id: str, anchor_name: str = "Anchor") -> dict:
+    """
+    在图层上添加 Anchor Point 效果，用于引用其他图层的内容。
+
+    anchor_name  锚点名称。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("add_anchor_point_effect",
+                   {"layer_id": layer_id, "anchor_name": anchor_name or "Anchor"})
+
+
+@mcp.tool()
+def sp_get_effect_parameters(layer_id: str) -> dict:
+    """
+    读取效果节点参数。
+
+    支持 LevelsEffect, CompareMaskEffect, ColorSelectionEffect,
+    FilterEffect, GeneratorEffect。
+    返回节点类型和当前参数/源信息。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("get_effect_parameters", {"layer_id": layer_id})
+
+
+@mcp.tool()
+def sp_get_selected_nodes(texture_set_name: str = None) -> dict:
+    """
+    获取当前选中的节点列表。
+
+    texture_set_name  纹理集名称，不指定则使用活动纹理集。
+    """
+    kwargs = {}
+    if texture_set_name:
+        kwargs["texture_set_name"] = texture_set_name
+    return sp.call("get_selected_nodes", kwargs)
+
+
+@mcp.tool()
+def sp_set_selected_nodes(node_ids: list) -> dict:
+    """
+    设置选中节点。
+
+    node_ids  节点 ID 列表。
+    """
+    if not node_ids:
+        raise ValueError("node_ids must be a non-empty list")
+    return sp.call("set_selected_nodes", {"node_ids": node_ids})
+
+
+# ── Phase 16: 烘焙 API ──────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def sp_get_baking_parameters(texture_set_name: str) -> dict:
+    """
+    读取纹理集的完整烘焙参数。
+
+    返回 common 参数、各 baker 参数、曲率方法、启用的 bakers 和 UV tiles。
+    """
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    return sp.call("get_baking_parameters", {"texture_set_name": texture_set_name})
+
+
+@mcp.tool()
+def sp_set_baking_parameters(texture_set_name: str,
+                             common_params: dict = None,
+                             baker_params: dict = None) -> dict:
+    """
+    设置纹理集的烘焙参数。
+
+    common_params  如 {"OutputSize": [4096, 4096], "HipolyMesh": "file:///C:/..."}
+    baker_params    如 {"AO": {"Distribution": "Cosine"}}
+    """
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    kwargs = {"texture_set_name": texture_set_name}
+    if common_params:
+        kwargs["common_params"] = common_params
+    if baker_params:
+        kwargs["baker_params"] = baker_params
+    return sp.call("set_baking_parameters", kwargs)
+
+
+@mcp.tool()
+def sp_bake_texture_set(texture_set_name: str) -> dict:
+    """
+    异步启动纹理集烘焙。
+
+    烘焙过程异步进行，完成后触发 BakingProcessEnded 事件。
+    使用前需确保烘焙参数已配置（sp_set_baking_parameters）。
+    """
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    return sp.call("bake_texture_set", {"texture_set_name": texture_set_name})
+
+
+@mcp.tool()
+def sp_get_baking_state(texture_set_name: str) -> dict:
+    """
+    获取烘焙状态（启用/禁用、链接信息、UV tiles）。
+
+    返回 textureset_enabled, curvature_method, enabled_bakers,
+    linked_groups, enabled_uv_tiles。
+    """
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    return sp.call("get_baking_state", {"texture_set_name": texture_set_name})
+
+
+@mcp.tool()
+def sp_set_baking_state(texture_set_name: str,
+                        enabled: bool = None,
+                        curvature_method: str = None,
+                        enabled_bakers: list = None,
+                        enabled_uv_tiles: list = None) -> dict:
+    """
+    设置烘焙状态。
+
+    enabled            是否启用该纹理集烘焙
+    curvature_method    "FromMesh" 或 "FromNormalMap"
+    enabled_bakers      启用的 baker 列表，如 ["AO", "Normal", "Curvature"]
+    enabled_uv_tiles    启用的 UV tiles，如 [{"u": 0, "v": 0}, {"u": 1, "v": 0}]
+    """
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    kwargs = {"texture_set_name": texture_set_name}
+    if enabled is not None:
+        kwargs["enabled"] = enabled
+    if curvature_method:
+        kwargs["curvature_method"] = curvature_method
+    if enabled_bakers is not None:
+        kwargs["enabled_bakers"] = enabled_bakers
+    if enabled_uv_tiles is not None:
+        kwargs["enabled_uv_tiles"] = enabled_uv_tiles
+    return sp.call("set_baking_state", kwargs)
+
+
+# ── Phase 17: 项目生命周期 ──────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def sp_create_project(
+    mesh_file_path: str,
+    mesh_map_file_paths: list = None,
+    normal_map_format: str = "OpenGL",
+    tangent_space_mode: str = "PerFragment",
+    project_workflow: str = "Default",
+    import_cameras: bool = False,
+    default_texture_resolution: int = 2048,
+    mesh_unit_scale: float = None,
+) -> dict:
+    """
+    创建新 Substance 3D Painter 项目。
+
+    mesh_file_path              网格文件路径 (.fbx/.obj/.dae/.ply/.usd)
+    mesh_map_file_paths          额外的网格贴图路径列表
+    normal_map_format            "OpenGL" 或 "DirectX"
+    tangent_space_mode           "PerVertex" 或 "PerFragment"
+    project_workflow             "Default" / "TextureSetPerUVTile" / "UVTile"
+    import_cameras               是否从网格文件导入相机
+    default_texture_resolution   默认贴图分辨率 (256/512/1024/2048/4096)
+    mesh_unit_scale              自定义单位缩放 (cm)，None 则使用文件内部单位
+
+    仅在未打开项目时可用。
+    """
+    if not mesh_file_path:
+        raise ValueError("mesh_file_path must not be empty")
+    kwargs = {
+        "mesh_file_path": mesh_file_path,
+        "normal_map_format": normal_map_format,
+        "tangent_space_mode": tangent_space_mode,
+        "project_workflow": project_workflow,
+        "import_cameras": import_cameras,
+        "default_texture_resolution": default_texture_resolution,
+    }
+    if mesh_map_file_paths:
+        kwargs["mesh_map_file_paths"] = mesh_map_file_paths
+    if mesh_unit_scale is not None:
+        kwargs["mesh_unit_scale"] = mesh_unit_scale
+    return sp.call("create_project", kwargs)
+
+
+@mcp.tool()
+def sp_open_project(file_path: str) -> dict:
+    """
+    打开已有 .spp 项目。
+
+    file_path  项目文件的完整路径。
+    仅在未打开项目时可用。
+    """
+    if not file_path:
+        raise ValueError("file_path must not be empty")
+    return sp.call("open_project", {"file_path": file_path})
+
+
+@mcp.tool()
+def sp_close_project() -> dict:
+    """
+    关闭当前项目（不保存修改）。
+
+    关闭后可使用 sp_create_project 或 sp_open_project 开始新工作。
+    """
+    return sp.call("close_project")
+
+
+@mcp.tool()
+def sp_reload_mesh(mesh_file_path: str,
+                   import_cameras: bool = True,
+                   preserve_strokes: bool = True) -> dict:
+    """
+    重载当前项目的网格（异步操作）。
+
+    mesh_file_path     新网格文件路径
+    import_cameras     是否从文件导入相机
+    preserve_strokes   是否保留笔触位置
+    """
+    if not mesh_file_path:
+        raise ValueError("mesh_file_path must not be empty")
+    return sp.call("reload_mesh", {
+        "mesh_file_path": mesh_file_path,
+        "import_cameras": import_cameras,
+        "preserve_strokes": preserve_strokes,
+    })
+
+
+@mcp.tool()
+def sp_get_project_metadata(context: str, key: str) -> dict:
+    """
+    读取项目元数据。
+
+    context  命名空间（如插件名），用于隔离不同工具的元数据
+    key      元数据键名
+    """
+    if not context:
+        raise ValueError("context must not be empty")
+    if not key:
+        raise ValueError("key must not be empty")
+    return sp.call("get_project_metadata", {"context": context, "key": key})
+
+
+@mcp.tool()
+def sp_set_project_metadata(context: str, key: str, value) -> dict:
+    """
+    写入项目元数据。
+
+    支持类型: bool, int, float, str, list, dict (键为 str)。
+    元数据随项目文件持久化保存。
+    """
+    if not context:
+        raise ValueError("context must not be empty")
+    if not key:
+        raise ValueError("key must not be empty")
+    return sp.call("set_project_metadata",
+                   {"context": context, "key": key, "value": value})
+
+
+@mcp.tool()
+def sp_list_project_metadata(context: str) -> dict:
+    """
+    列出某 context 下所有元数据键名。
+    """
+    if not context:
+        raise ValueError("context must not be empty")
+    return sp.call("list_project_metadata", {"context": context})
+
+
+@mcp.tool()
+def sp_list_resources_by_usage(usage: str, search: str = "") -> dict:
+    """
+    按用途类型列出可用资源。
+
+    usage   资源用途: "filter"/"generator"/"substance"/"smart_material"/"smart_mask"/"texture"/"environment"/"export_preset"
+    search  可选的名称过滤
+    """
+    if not usage:
+        raise ValueError("usage must not be empty")
+    return sp.call("list_resources_by_usage",
+                   {"usage": usage, "search": search or ""})
+
+
 # ── 入口 ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:

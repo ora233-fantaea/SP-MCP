@@ -1,7 +1,7 @@
 {
   "$schema": "https://opencode.ai/mcp.json",
   "name": "substance-painter",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Control Substance 3D Painter layer stack and material creation via MCP",
   "transports": [
     {
@@ -84,6 +84,28 @@
     { "name": "sp_set_tone_mapping",         "description": "Set tone mapping function (Linear or ACES)" },
     { "name": "sp_get_color_lut",            "description": "Get current color LUT profile resource" },
     { "name": "sp_set_color_lut",            "description": "Set color LUT profile by resource name" },
-    { "name": "sp_get_scene_bounding_box",   "description": "Get scene axis-aligned bounding box (dimensions, center, radius)" }
+    { "name": "sp_get_scene_bounding_box",   "description": "Get scene axis-aligned bounding box (dimensions, center, radius)" },
+    { "name": "sp_add_filter_effect",        "description": "Add a Filter effect to a layer (empty or with filter resource)" },
+    { "name": "sp_add_generator_effect",     "description": "Add a Generator effect to a layer (empty or with generator resource)" },
+    { "name": "sp_add_levels_effect",        "description": "Add a Levels effect to a layer for channel level adjustment" },
+    { "name": "sp_add_compare_mask_effect",  "description": "Add a Compare Mask effect to a layer's mask stack" },
+    { "name": "sp_add_color_selection_effect","description": "Add a Color Selection effect to a layer's mask stack" },
+    { "name": "sp_add_anchor_point_effect",  "description": "Add an Anchor Point effect to reference other layer content" },
+    { "name": "sp_get_effect_parameters",    "description": "Get parameters of an effect node (Levels/CompareMask/ColorSelection/Filter/Generator)" },
+    { "name": "sp_get_selected_nodes",       "description": "Get currently selected nodes in the layer stack" },
+    { "name": "sp_set_selected_nodes",       "description": "Set node selection by list of node IDs" },
+    { "name": "sp_get_baking_parameters",    "description": "Get full baking parameters for a texture set (common + per-baker)" },
+    { "name": "sp_set_baking_parameters",    "description": "Set baking parameters for a texture set" },
+    { "name": "sp_bake_texture_set",         "description": "Launch async baking for a texture set" },
+    { "name": "sp_get_baking_state",         "description": "Get baking state (enabled bakers, UV tiles, linked groups)" },
+    { "name": "sp_set_baking_state",         "description": "Set baking state (enable/disable bakers, curvature method, UV tiles)" },
+    { "name": "sp_create_project",           "description": "Create new SP project with mesh, settings, and workflow options" },
+    { "name": "sp_open_project",             "description": "Open an existing .spp project file" },
+    { "name": "sp_close_project",            "description": "Close current project without saving" },
+    { "name": "sp_reload_mesh",              "description": "Reload/swap mesh in current project (async)" },
+    { "name": "sp_get_project_metadata",     "description": "Read persistent project metadata by context and key" },
+    { "name": "sp_set_project_metadata",     "description": "Write persistent project metadata (stored in .spp file)" },
+    { "name": "sp_list_project_metadata",    "description": "List all metadata keys for a context" },
+    { "name": "sp_list_resources_by_usage",  "description": "List available resources by usage type (filter/generator/substance/etc.)" }
   ]
 }

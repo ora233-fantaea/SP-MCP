@@ -135,7 +135,7 @@ mcp_servers:
 
 ---
 
-## 🛠️ MCP Tools (70 个 🆕)
+## 🛠️ MCP Tools (92 个 🆕)
 
 > [!TIP]
 > 所有图层修改操作（`add_fill_layer`、`set_layer_channel`、`apply_smart_material` 等）自动包裹 `ScopedModification`，**每个 API 调用 = 1 条 undo**。
@@ -252,7 +252,84 @@ mcp_servers:
 | `sp_shortcut` | 预定义快捷键封装（save/undo/frame_all 等 26 种） |
 </details>
 
----
+<details>
+<summary><b>✨ 效果节点 (9)</b></summary>
+
+| Tool | 说明 |
+|------|------|
+| `sp_add_filter_effect` | 添加 Filter 效果（可选指定 filter 资源） |
+| `sp_add_generator_effect` | 添加 Generator 效果（可选指定 generator 资源） |
+| `sp_add_levels_effect` | 添加 Levels 色阶调整效果 |
+| `sp_add_compare_mask_effect` | 添加 Compare Mask 通道比较遮罩效果 |
+| `sp_add_color_selection_effect` | 添加 Color Selection ID 遮罩效果 |
+| `sp_add_anchor_point_effect` | 添加 Anchor Point 锚点效果 |
+| `sp_get_effect_parameters` | 读取效果节点参数 |
+| `sp_get_selected_nodes` | 获取当前选中节点列表 |
+| `sp_set_selected_nodes` | 设置选中节点 |
+</details>
+
+<details>
+<summary><b>🔥 烘焙 API (5)</b></summary>
+
+> 完整 Python 烘焙参数控制，替代 JS `alg.baking.bake()`。
+
+| Tool | 说明 |
+|------|------|
+| `sp_get_baking_parameters` | 读取纹理集完整烘焙参数（common + 各 baker） |
+| `sp_set_baking_parameters` | 设置烘焙参数（分辨率/高模路径等） |
+| `sp_bake_texture_set` | 异步启动纹理集烘焙 |
+| `sp_get_baking_state` | 获取烘焙状态（启用/bakers/UV tiles/链接） |
+| `sp_set_baking_state` | 设置烘焙状态（启用纹理集/bakers/曲率方法） |
+</details>
+
+<details>
+<summary><b>📁 项目生命周期 (7)</b></summary>
+
+| Tool | 说明 |
+|------|------|
+| `sp_create_project` | 创建新项目（网格/设置/工作流/法线格式） |
+| `sp_open_project` | 打开已有 .spp 项目 |
+| `sp_close_project` | 关闭当前项目（不保存） |
+| `sp_reload_mesh` | 异步重载项目网格 |
+| `sp_get_project_metadata` | 读取项目持久化元数据 |
+| `sp_set_project_metadata` | 写入项目持久化元数据 |
+| `sp_list_project_metadata` | 列出 context 下所有元数据键 |
+</details>
+
+<details>
+<summary><b>🔍 资源发现 (1)</b></summary>
+
+| Tool | 说明 |
+|------|------|
+| `sp_list_resources_by_usage` | 按用途类型列出资源（filter/generator/substance 等） |
+</details>
+
+<details>
+<summary><b>🎨 程序化源控制 (7)</b></summary>
+
+| Tool | 说明 |
+|------|------|
+| `sp_get_source_info` | 获取填充图层/效果的源信息 |
+| `sp_get_substance_parameters` | 读取程序化源参数值 |
+| `sp_set_substance_parameters` | 修改程序化源参数值 |
+| `sp_get_substance_presets` | 列出程序化源可用预设 |
+| `sp_apply_substance_preset` | 应用指定预设 |
+| `sp_get_source_outputs` | 获取源输出映射信息 |
+| `sp_set_source_output` | 切换源活动输出 |
+</details>
+
+<details>
+<summary><b>📷 相机与显示 (6)</b></summary>
+
+| Tool | 说明 |
+|------|------|
+| `sp_get_camera` | 读取主相机完整状态 |
+| `sp_get_tone_mapping` | 获取色调映射函数 |
+| `sp_set_tone_mapping` | 设置色调映射函数 |
+| `sp_get_color_lut` | 获取色彩 LUT 配置 |
+| `sp_set_color_lut` | 设置色彩 LUT 配置 |
+| `sp_get_scene_bounding_box` | 获取场景包围盒 |
+</details>
 
 ## ⚠️ 已知限制
 
