@@ -1602,6 +1602,486 @@ def _capture_iray() -> dict:
     return result
 
 
+# ── Phase: 程序化源参数控制 ─────────────────────────────────────────────────
+
+
+def _resolve_channel(channel: str):
+    """将字符串 channel 名称转换为 ChannelType 枚举值。"""
+    import substance_painter.layerstack as ls
+    mapping = {
+        "BaseColor":  ls.ChannelType.BaseColor,
+        "Roughness":  ls.ChannelType.Roughness,
+        "Metallic":   ls.ChannelType.Metallic,
+        "Height":     ls.ChannelType.Height,
+        "Normal":     ls.ChannelType.Normal,
+        "Emissive":   ls.ChannelType.Emissive,
+        "Specular":   ls.ChannelType.Specular,
+        "Opacity":    ls.ChannelType.Opacity,
+        "AmbientOcclusion": ls.ChannelType.AmbientOcclusion,
+    }
+    if hasattr(ls.ChannelType, "Scattering"):
+        mapping["Scattering"] = ls.ChannelType.Scattering
+    if hasattr(ls.ChannelType, "Translucency"):
+        mapping["Translucency"] = ls.ChannelType.Translucency
+
+    if channel in mapping:
+        return mapping[channel]
+    raise ValueError(f"Unknown channel: {channel!r}. Valid: {sorted(mapping.keys())}")
+
+
+def _serialize_property_value(value) -> object:
+    """将 PropertyValue 对象序列化为 JSON 兼容的基本类型。"""
+    import substance_painter.colormanagement as cm
+    try:
+        raw = value.value()
+    except Exception:
+        return str(value)
+
+    # Color 对象
+    if isinstance(raw, cm.Color):
+        return {"r": raw.value_raw[0], "g": raw.value_raw[1], "b": raw.value_raw[2]}
+    # 枚举
+    if hasattr(raw, "name"):
+        return raw.name
+    # 基本类型
+    if isinstance(raw, (int, float, bool, str)):
+        return raw
+    # Tuple/list
+    if isinstance(raw, (tuple, list)):
+        return list(raw)
+    return str(raw)
+
+
+def _serialize_source(source) -> dict:
+    """将 Source 对象序列化为 dict。"""
+    import substance_painter.source as src_mod
+    import substance_painter.colormanagement as cm
+    import substance_painter.resource as r
+
+    stype = type(source).__name__
+    info = {"type": stype}
+
+    # 公共属性
+    if isinstance(source, src_mod.SourceUniformColor):
+        try:
+            c = source.get_color()
+            info["color"] = {"r": c.value_raw[0], "g": c.value_raw[1], "b": c.value_raw[2]}
+        except Exception:
+            pass
+    elif isinstance(source, src_mod.SourceSubstance):
+        rid = source.resource_id
+        if rid:
+            info["resource"] = {"context": rid.context, "name": rid.name, "url": rid.url()}
+        try:
+            info["image_inputs"] = list(source.image_inputs)
+        except Exception:
+            pass
+        try:
+            info["image_outputs"] = list(source.image_outputs)
+        except Exception:
+            pass
+        try:
+            info["active_output"] = source.active_output
+        except Exception:
+            pass
+        try:
+            info["mask_output"] = source.mask_output
+        except Exception:
+            pass
+        try:
+            info["presets"] = source.get_preset_list()
+        except Exception:
+            info["presets"] = []
+        try:
+            params = source.get_parameters()
+            info["parameters"] = {k: _serialize_property_value(v) for k, v in params.items()}
+        except Exception:
+            info["parameters"] = {}
+        try:
+            props = source.get_properties()
+            info["parameter_types"] = {}
+            for k, prop in props.items():
+                try:
+                    info["parameter_types"][k] = prop.type().name
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    elif isinstance(source, src_mod.SourceBitmap):
+        rid = source.resource_id
+        if rid:
+            info["resource"] = {"context": rid.context, "name": rid.name, "url": rid.url()}
+        try:
+            info["color_space"] = source.get_color_space().name
+        except Exception:
+            pass
+    elif isinstance(source, src_mod.SourceVectorial):
+        rid = source.resource_id
+        if rid:
+            info["resource"] = {"context": rid.context, "name": rid.name, "url": rid.url()}
+        try:
+            params = source.get_parameters()
+            info["artboard_id"] = params.artboard_id
+            info["scope"] = params.scope
+        except Exception:
+            pass
+    elif isinstance(source, src_mod.SourceReference):
+        try:
+            if source.anchor:
+                info["anchor_id"] = str(source.anchor.uid())
+        except Exception:
+            pass
+        try:
+            info["alpha_matte"] = source.alpha_matte.name
+        except Exception:
+            pass
+    elif isinstance(source, src_mod.SourceFont):
+        rid = source.resource_id
+        if rid:
+            info["resource"] = {"context": rid.context, "name": rid.name, "url": rid.url()}
+        try:
+            params = source.get_parameters()
+            info["text"] = params.text
+            info["font_size"] = params.size
+        except Exception:
+            pass
+
+    return info
+
+
+def _get_substance_source(layer_id: str, channel: str = None):
+    """Helper: 从图层获取 SourceSubstance 对象。
+
+    如果 source 不是 Substance 类型则抛出 ValueError。
+    """
+    import substance_painter.source as src_mod
+    import substance_painter.layerstack as ls
+
+    node = _find_layer(layer_id)
+    node_type = type(node).__name__
+
+    if node_type not in ("FillLayerNode", "FillEffectNode"):
+        raise ValueError(
+            f"Layer {layer_id!r} (type={node_type}) does not support sources. "
+            f"Only FillLayerNode / FillEffectNode are supported."
+        )
+
+    mode = node.source_mode
+
+    if mode is not None and mode.name == "Material":
+        s = node.get_material_source()
+    elif channel:
+        ch = _resolve_channel(channel)
+        s = node.get_source(ch)
+    else:
+        # 自动查找 — 优先 BaseColor channel
+        try:
+            ch = _resolve_channel("BaseColor")
+            s = node.get_source(ch)
+        except Exception:
+            s = None
+        # 如果 BaseColor 没有，尝试 material source
+        if s is None and mode is not None and mode.name == "Material":
+            try:
+                s = node.get_material_source()
+            except Exception:
+                pass
+
+    if s is None:
+        raise ValueError(
+            f"Layer {layer_id!r} has no source assigned. "
+            f"Apply a material or set a source first."
+        )
+
+    if not isinstance(s, src_mod.SourceSubstance):
+        raise ValueError(
+            f"Layer {layer_id!r} source is {type(s).__name__}, not a procedural "
+            f"(Substance) source. Only procedural sources have parameters."
+        )
+
+    return s
+
+
+# ── 公共 handler 函数 ──
+
+
+def get_source_info(layer_id: str, channel: str = None) -> dict:
+    """获取填充图层/效果的源信息。"""
+    import substance_painter.source as src_mod
+    import substance_painter.layerstack as ls
+
+    node = _find_layer(layer_id)
+    node_type = type(node).__name__
+
+    if node_type not in ("FillLayerNode", "FillEffectNode",
+                         "GeneratorEffectNode", "FilterEffectNode"):
+        raise ValueError(
+            f"Layer {layer_id!r} (type={node_type}) does not support sources."
+        )
+
+    mode = node.source_mode if hasattr(node, "source_mode") else None
+    result = {
+        "layer_id": layer_id,
+        "node_type": node_type,
+        "source_mode": mode.name if mode else "none",
+    }
+
+    if mode is not None and mode.name == "Material":
+        try:
+            ms = node.get_material_source()
+            if ms is not None:
+                result["material_source"] = _serialize_source(ms)
+        except Exception:
+            result["material_source"] = None
+    else:
+        if channel:
+            ch = _resolve_channel(channel)
+            try:
+                s = node.get_source(ch)
+                if s is not None:
+                    result["source"] = _serialize_source(s)
+            except Exception as e:
+                result["source_error"] = str(e)
+        else:
+            sources = {}
+            for ch_name in ("BaseColor", "Roughness", "Metallic", "Height", "Normal"):
+                try:
+                    ch = _resolve_channel(ch_name)
+                    s = node.get_source(ch)
+                    if s is not None:
+                        sources[ch_name] = _serialize_source(s)
+                except Exception:
+                    pass
+            if sources:
+                result["sources"] = sources
+
+    return result
+
+
+def get_substance_parameters(layer_id: str, channel: str = None) -> dict:
+    """读取程序化源（Substance）的当前参数值。"""
+    source = _get_substance_source(layer_id, channel)
+
+    params = source.get_parameters()
+    props = source.get_properties()
+
+    result = {}
+    for name, value in params.items():
+        entry = {"value": _serialize_property_value(value)}
+        prop = props.get(name)
+        if prop:
+            try:
+                entry["type"] = prop.type().name
+            except Exception:
+                pass
+            try:
+                entry["description"] = str(prop.description())
+            except Exception:
+                pass
+        result[name] = entry
+
+    return {"layer_id": layer_id, "parameters": result}
+
+
+def set_substance_parameters(layer_id: str, params: dict,
+                             channel: str = None) -> dict:
+    """修改程序化源参数。params 为 {name: value, ...}。"""
+    import substance_painter.properties as sprop
+
+    source = _get_substance_source(layer_id, channel)
+
+    # 将原始值包装为 PropertyValue
+    wrapped = {}
+    for k, v in params.items():
+        try:
+            wrapped[k] = sprop.PropertyValue(v)
+        except Exception as e:
+            raise ValueError(
+                f"Failed to wrap parameter {k!r}={v!r}: {e}"
+            ) from e
+
+    with _auto_batch("Set substance parameters"):
+        source.set_parameters(wrapped)
+
+    _log_info(
+        f"set_substance_parameters layer={layer_id!r} "
+        f"keys={list(params.keys())}"
+    )
+    return {"ok": True, "layer_id": layer_id, "updated": list(params.keys())}
+
+
+def get_substance_presets(layer_id: str, channel: str = None) -> dict:
+    """列出程序化源的所有可用预设。"""
+    source = _get_substance_source(layer_id, channel)
+    return {"layer_id": layer_id, "presets": source.get_preset_list()}
+
+
+def apply_substance_preset(layer_id: str, preset_name: str,
+                           channel: str = None) -> dict:
+    """为程序化源应用预设。"""
+    source = _get_substance_source(layer_id, channel)
+
+    presets = source.get_preset_list()
+    if preset_name not in presets:
+        raise ValueError(
+            f"Preset {preset_name!r} not found. "
+            f"Available: {presets[:20]}" + ("..." if len(presets) > 20 else "")
+        )
+
+    with _auto_batch(f"Apply preset {preset_name}"):
+        source.apply_preset(preset_name)
+
+    _log_info(
+        f"apply_substance_preset layer={layer_id!r} preset={preset_name!r}"
+    )
+    return {"ok": True, "layer_id": layer_id, "preset": preset_name}
+
+
+def get_source_outputs(layer_id: str, channel: str = None) -> dict:
+    """获取程序化源的输出映射信息。"""
+    import substance_painter.source as src_mod
+
+    source = _get_substance_source(layer_id, channel)
+
+    result = {
+        "layer_id": layer_id,
+        "image_outputs": [],
+        "active_output": None,
+        "mask_output": None,
+        "output_mapping": {},
+    }
+
+    try:
+        result["image_outputs"] = list(source.image_outputs)
+    except Exception:
+        pass
+    try:
+        result["active_output"] = source.active_output
+    except Exception:
+        pass
+    try:
+        result["mask_output"] = source.mask_output
+    except Exception:
+        pass
+    try:
+        om = source.output_mapping
+        for ch in om:
+            try:
+                val = om[ch]
+                ch_name = ch.name if hasattr(ch, "name") else str(ch)
+                val_name = val.name if hasattr(val, "name") else str(val)
+                result["output_mapping"][ch_name] = val_name
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return result
+
+
+def set_source_output(layer_id: str, output_identifier: str,
+                      channel: str = None) -> dict:
+    """设置程序化源的活动输出（在单输出上下文中）。"""
+    source = _get_substance_source(layer_id, channel)
+
+    if output_identifier not in source.image_outputs:
+        raise ValueError(
+            f"Output {output_identifier!r} not found. "
+            f"Available: {list(source.image_outputs)}"
+        )
+
+    with _auto_batch(f"Set output to {output_identifier}"):
+        source.active_output = output_identifier
+
+    _log_info(
+        f"set_source_output layer={layer_id!r} output={output_identifier!r}"
+    )
+    return {"ok": True, "layer_id": layer_id, "active_output": output_identifier}
+
+
+# ── Phase: 相机与显示增强 ────────────────────────────────────────────────────
+
+
+def get_camera() -> dict:
+    """读取主相机的完整状态。"""
+    import substance_painter.display as display
+
+    cam = display.Camera.get_default_camera()
+    return {
+        "position": list(cam.position),
+        "rotation": list(cam.rotation),
+        "field_of_view": cam.field_of_view,
+        "focal_length": cam.focal_length,
+        "focus_distance": cam.focus_distance,
+        "aperture": cam.aperture,
+        "orthographic_height": cam.orthographic_height,
+        "projection_type": cam.projection_type.name,
+    }
+
+
+def get_tone_mapping() -> dict:
+    """获取当前色调映射函数。"""
+    import substance_painter.display as display
+
+    try:
+        tm = display.get_tone_mapping()
+        return {"tone_mapping": tm.name}
+    except Exception as e:
+        return {"tone_mapping": None, "error": str(e)}
+
+
+def set_tone_mapping(function: str) -> dict:
+    """设置色调映射函数（"Linear" 或 "ACES"）。"""
+    import substance_painter.display as display
+
+    valid = {x.name: x for x in display.ToneMappingFunction}
+    if function not in valid:
+        raise ValueError(
+            f"Unknown tone mapping: {function!r}. Valid: {sorted(valid.keys())}"
+        )
+
+    display.set_tone_mapping(valid[function])
+    _log_info(f"set_tone_mapping: {function!r}")
+    return {"ok": True, "tone_mapping": function}
+
+
+def get_color_lut() -> dict:
+    """获取当前色彩 LUT 配置文件。"""
+    import substance_painter.display as display
+
+    rid = display.get_color_lut_resource()
+    if rid is None:
+        return {"color_lut": None}
+    return {"color_lut": {"context": rid.context, "name": rid.name, "url": rid.url()}}
+
+
+def set_color_lut(resource_name: str) -> dict:
+    """按名称设置色彩 LUT 配置文件。"""
+    import substance_painter.display as display
+    import substance_painter.resource as r
+
+    resources = r.search(resource_name)
+    for res in resources:
+        if resource_name.lower() in res.gui_name().lower():
+            display.set_color_lut_resource(res.identifier())
+            _log_info(f"set_color_lut: {res.gui_name()!r}")
+            return {"ok": True, "color_lut": res.gui_name()}
+
+    raise ValueError(f"Color LUT not found: {resource_name!r}")
+
+
+def get_scene_bounding_box() -> dict:
+    """获取场景包围盒（中心、尺寸、半径）。"""
+    import substance_painter.project as project
+
+    bb = project.get_scene_bounding_box()
+    return {
+        "dimensions": list(bb.dimensions),
+        "center": list(bb.center),
+        "radius": bb.radius,
+    }
+
+
 # ── 方法注册表 ────────────────────────────────────────────────────────────────
 
 _REGISTRY: dict = {
@@ -1668,4 +2148,19 @@ _REGISTRY: dict = {
     "add_mask":                 add_mask,
     "remove_mask":              remove_mask,
     "find_layer_by_name":       find_layer_by_name,
+    # source control
+    "get_source_info":          get_source_info,
+    "get_substance_parameters": get_substance_parameters,
+    "set_substance_parameters": set_substance_parameters,
+    "get_substance_presets":    get_substance_presets,
+    "apply_substance_preset":   apply_substance_preset,
+    "get_source_outputs":       get_source_outputs,
+    "set_source_output":        set_source_output,
+    # camera & display
+    "get_camera":               get_camera,
+    "get_tone_mapping":         get_tone_mapping,
+    "set_tone_mapping":         set_tone_mapping,
+    "get_color_lut":            get_color_lut,
+    "set_color_lut":            set_color_lut,
+    "get_scene_bounding_box":   get_scene_bounding_box,
 }

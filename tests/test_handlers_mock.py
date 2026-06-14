@@ -1138,3 +1138,251 @@ class TestShortcut:
         result = handlers.sp_shortcut("  undo  ")
         assert result["sent"] == "z"
         assert result["modifiers"] == ["ctrl"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 13: Source Control + Camera/Display (new handlers)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import substance_painter.source as src_mod
+import substance_painter.layerstack as ls
+
+
+def _setup_substance_fill_layer(lid, resource_name="test_material"):
+    """Helper: set a fill layer's source to a SourceSubstance mock."""
+    node = ls.get_node_by_uid(int(lid))
+    node._source_mode = src_mod.SourceMode.Material
+    node._material_source = src_mod.SourceSubstance(resource_name)
+    return node
+
+
+def _setup_uniform_color_fill_layer(lid):
+    """Helper: set a fill layer's source to a SourceUniformColor mock."""
+    node = ls.get_node_by_uid(int(lid))
+    node.set_source(ls.ChannelType.BaseColor, src_mod.SourceUniformColor(0.8, 0.2, 0.1))
+    return node
+
+
+# ── get_source_info ────────────────────────────────────────────────────────────
+
+class TestGetSourceInfo:
+    def test_substance_source(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("SourceTest_Substance")
+        _setup_substance_fill_layer(r["id"])
+        info = handlers.get_source_info(r["id"])
+        assert info["layer_id"] == r["id"]
+        assert info["source_mode"] == "Material"
+        assert "material_source" in info
+        assert info["material_source"]["type"] == "SourceSubstance"
+
+    def test_uniform_color_source(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("SourceTest_Color")
+        _setup_uniform_color_fill_layer(r["id"])
+        info = handlers.get_source_info(r["id"])
+        assert info["source_mode"] == "none"
+        assert "sources" in info
+        assert "BaseColor" in info["sources"]
+        assert info["sources"]["BaseColor"]["type"] == "SourceUniformColor"
+
+    def test_paint_layer_raises(self, fresh_layer_stack):
+        r = handlers.add_paint_layer("PaintTest")
+        with pytest.raises(ValueError, match="does not support sources"):
+            handlers.get_source_info(r["id"])
+
+    def test_invalid_layer_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="not found"):
+            handlers.get_source_info("99999")
+
+
+# ── get_substance_parameters ───────────────────────────────────────────────────
+
+class TestGetSubstanceParameters:
+    def test_returns_dict(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("ParamTest")
+        _setup_substance_fill_layer(r["id"])
+        result = handlers.get_substance_parameters(r["id"])
+        assert result["layer_id"] == r["id"]
+        assert "parameters" in result
+        assert isinstance(result["parameters"], dict)
+
+    def test_has_expected_params(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("ParamTest2")
+        _setup_substance_fill_layer(r["id"])
+        result = handlers.get_substance_parameters(r["id"])
+        params = result["parameters"]
+        assert "scale" in params
+        assert "dirt_level" in params
+        assert "wear_amount" in params
+
+    def test_no_source_raises(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("NoSource")
+        # Clear the default color source set by add_fill_layer
+        node = ls.get_node_by_uid(int(r["id"]))
+        node._sources = {}
+        node._source_mode = None
+        node._material_source = None
+        with pytest.raises(ValueError, match="has no source assigned"):
+            handlers.get_substance_parameters(r["id"])
+
+    def test_wrong_source_type_raises(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("WrongType")
+        _setup_uniform_color_fill_layer(r["id"])
+        with pytest.raises(ValueError, match="not a procedural"):
+            handlers.get_substance_parameters(r["id"])
+
+
+# ── set_substance_parameters ───────────────────────────────────────────────────
+
+class TestSetSubstanceParameters:
+    def test_sets_params(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("SetParamTest")
+        _setup_substance_fill_layer(r["id"])
+        result = handlers.set_substance_parameters(
+            r["id"], {"scale": 2.0, "dirt_level": 0.8}
+        )
+        assert result["ok"] is True
+        assert set(result["updated"]) == {"scale", "dirt_level"}
+
+        # Verify parameters were actually changed
+        params = handlers.get_substance_parameters(r["id"])["parameters"]
+        assert params["scale"]["value"] == 2.0
+        assert params["dirt_level"]["value"] == 0.8
+
+    def test_empty_params(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("EmptyParams")
+        _setup_substance_fill_layer(r["id"])
+        result = handlers.set_substance_parameters(r["id"], {})
+        assert result["ok"] is True
+        assert result["updated"] == []
+
+
+# ── get_substance_presets ──────────────────────────────────────────────────────
+
+class TestGetSubstancePresets:
+    def test_returns_preset_list(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("PresetTest")
+        _setup_substance_fill_layer(r["id"])
+        result = handlers.get_substance_presets(r["id"])
+        assert result["layer_id"] == r["id"]
+        assert "presets" in result
+        assert "Default" in result["presets"]
+        assert "Worn" in result["presets"]
+
+
+# ── apply_substance_preset ─────────────────────────────────────────────────────
+
+class TestApplySubstancePreset:
+    def test_applies_valid_preset(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("ApplyPresetTest")
+        _setup_substance_fill_layer(r["id"])
+        result = handlers.apply_substance_preset(r["id"], "Worn")
+        assert result["ok"] is True
+        assert result["preset"] == "Worn"
+
+    def test_invalid_preset_raises(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("BadPreset")
+        _setup_substance_fill_layer(r["id"])
+        with pytest.raises(ValueError, match="not found"):
+            handlers.apply_substance_preset(r["id"], "NonExistentPreset")
+
+
+# ── get_source_outputs ─────────────────────────────────────────────────────────
+
+class TestGetSourceOutputs:
+    def test_returns_outputs(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("OutputTest")
+        _setup_substance_fill_layer(r["id"])
+        result = handlers.get_source_outputs(r["id"])
+        assert result["layer_id"] == r["id"]
+        assert "output" in result["image_outputs"]
+        assert "roughness" in result["image_outputs"]
+        assert "metallic" in result["image_outputs"]
+        assert result["active_output"] == "output"
+
+
+# ── set_source_output ──────────────────────────────────────────────────────────
+
+class TestSetSourceOutput:
+    def test_sets_valid_output(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("SetOutputTest")
+        _setup_substance_fill_layer(r["id"])
+        result = handlers.set_source_output(r["id"], "metallic")
+        assert result["ok"] is True
+        assert result["active_output"] == "metallic"
+
+    def test_invalid_output_raises(self, fresh_layer_stack):
+        r = handlers.add_fill_layer("BadOutput")
+        _setup_substance_fill_layer(r["id"])
+        with pytest.raises(ValueError, match="not found"):
+            handlers.set_source_output(r["id"], "nonexistent_output")
+
+
+# ── get_camera ─────────────────────────────────────────────────────────────────
+
+class TestGetCamera:
+    def test_returns_full_dict(self, fresh_layer_stack):
+        result = handlers.get_camera()
+        expected_keys = {"position", "rotation", "field_of_view", "focal_length",
+                         "focus_distance", "aperture", "orthographic_height",
+                         "projection_type"}
+        assert set(result.keys()) == expected_keys
+
+    def test_position_is_list_of_three(self, fresh_layer_stack):
+        result = handlers.get_camera()
+        assert len(result["position"]) == 3
+        assert all(isinstance(v, (int, float)) for v in result["position"])
+
+    def test_focal_length_is_number(self, fresh_layer_stack):
+        result = handlers.get_camera()
+        assert isinstance(result["focal_length"], (int, float))
+
+    def test_projection_type_is_string(self, fresh_layer_stack):
+        result = handlers.get_camera()
+        assert isinstance(result["projection_type"], str)
+
+
+# ── get/set_tone_mapping ───────────────────────────────────────────────────────
+
+class TestToneMapping:
+    def test_get_returns_name(self, fresh_layer_stack):
+        result = handlers.get_tone_mapping()
+        assert "tone_mapping" in result
+
+    def test_set_valid(self, fresh_layer_stack):
+        result = handlers.set_tone_mapping("ACES")
+        assert result["ok"] is True
+        assert result["tone_mapping"] == "ACES"
+
+    def test_set_invalid_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="Unknown tone mapping"):
+            handlers.set_tone_mapping("InvalidFunction")
+
+
+# ── get/set_color_lut ──────────────────────────────────────────────────────────
+
+class TestColorLUT:
+    def test_get_returns_value(self, fresh_layer_stack):
+        result = handlers.get_color_lut()
+        assert "color_lut" in result
+        # Default is None (no LUT set)
+        assert result["color_lut"] is None
+
+    def test_set_nonexistent_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="Color LUT not found"):
+            handlers.set_color_lut("NonexistentLUT")
+
+
+# ── get_scene_bounding_box ─────────────────────────────────────────────────────
+
+class TestGetSceneBoundingBox:
+    def test_returns_dict(self, fresh_layer_stack):
+        result = handlers.get_scene_bounding_box()
+        assert set(result.keys()) == {"dimensions", "center", "radius"}
+
+    def test_radius_is_positive(self, fresh_layer_stack):
+        result = handlers.get_scene_bounding_box()
+        assert result["radius"] > 0
+
+    def test_dimensions_are_three_elements(self, fresh_layer_stack):
+        result = handlers.get_scene_bounding_box()
+        assert len(result["dimensions"]) == 3

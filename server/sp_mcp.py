@@ -849,6 +849,213 @@ def sp_shortcut(action: str) -> dict:
     return sp.call("sp_shortcut", {"action": action})
 
 
+# ── 程序化源参数控制 ─────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def sp_get_source_info(layer_id: str, channel: str = None) -> dict:
+    """
+    获取填充图层/效果的程序化源信息。
+
+    layer_id  从 sp_get_layer_stack 获取的图层 ID
+    channel   通道名（BaseColor/Roughness/Metallic/Height/Normal 等），不指定则返回所有通道
+
+    返回源类型、资源引用、参数、预设列表等。
+    如果图层没有源或图层类型不支持源，返回明确错误。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    kwargs = {"layer_id": layer_id}
+    if channel:
+        kwargs["channel"] = channel
+    return sp.call("get_source_info", kwargs)
+
+
+@mcp.tool()
+def sp_get_substance_parameters(layer_id: str, channel: str = None) -> dict:
+    """
+    读取程序化 Substance 源的当前参数值。
+
+    layer_id  图层 ID（该图层必须已应用程序化材质/Substance）
+    channel   通道名，不指定则自动选择（先尝 BaseColor，再尝 Material 模式）
+
+    返回每个参数的 name、value、type 和 description。
+    用于 AI 理解当前材质状态并决定调参方向。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    kwargs = {"layer_id": layer_id}
+    if channel:
+        kwargs["channel"] = channel
+    return sp.call("get_substance_parameters", kwargs)
+
+
+@mcp.tool()
+def sp_set_substance_parameters(layer_id: str, params: dict,
+                                channel: str = None) -> dict:
+    """
+    修改程序化 Substance 源的参数值。
+
+    layer_id  图层 ID
+    params    参数名→值的映射，如 {"scale": 2.0, "dirt_amount": 0.5, "color": {"r": 1.0, "g": 0.5, "b": 0.2}}
+              bool 参数用 0/1 而非 true/false
+    channel   通道名，不指定则自动选择
+
+    修改后建议调用 sp_capture_viewport 评估效果。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    if not params or not isinstance(params, dict):
+        raise ValueError("params must be a non-empty dict, e.g. {\"scale\": 2.0}")
+    kwargs = {"layer_id": layer_id, "params": params}
+    if channel:
+        kwargs["channel"] = channel
+    return sp.call("set_substance_parameters", kwargs)
+
+
+@mcp.tool()
+def sp_get_substance_presets(layer_id: str, channel: str = None) -> dict:
+    """
+    列出程序化 Substance 源的所有可用预设名称。
+
+    用此 tool 查看预设列表，然后用 sp_apply_substance_preset 应用。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    kwargs = {"layer_id": layer_id}
+    if channel:
+        kwargs["channel"] = channel
+    return sp.call("get_substance_presets", kwargs)
+
+
+@mcp.tool()
+def sp_apply_substance_preset(layer_id: str, preset_name: str,
+                              channel: str = None) -> dict:
+    """
+    为程序化 Substance 源应用指定预设。
+
+    preset_name 必须是 sp_get_substance_presets 返回列表中的值。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    if not preset_name:
+        raise ValueError("preset_name must not be empty")
+    kwargs = {"layer_id": layer_id, "preset_name": preset_name}
+    if channel:
+        kwargs["channel"] = channel
+    return sp.call("apply_substance_preset", kwargs)
+
+
+@mcp.tool()
+def sp_get_source_outputs(layer_id: str, channel: str = None) -> dict:
+    """
+    获取程序化 Substance 源的输出信息。
+
+    返回 image_outputs（输出列表）、active_output（当前输出）、
+    mask_output（遮罩输出）、output_mapping（通道→输出映射）。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    kwargs = {"layer_id": layer_id}
+    if channel:
+        kwargs["channel"] = channel
+    return sp.call("get_source_outputs", kwargs)
+
+
+@mcp.tool()
+def sp_set_source_output(layer_id: str, output_identifier: str,
+                         channel: str = None) -> dict:
+    """
+    切换程序化 Substance 源的活动输出。
+
+    output_identifier  输出标识符，从 sp_get_source_outputs 的 image_outputs 列表获取
+                       常用如 "output"、"base_color"、"roughness" 等
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    if not output_identifier:
+        raise ValueError("output_identifier must not be empty")
+    kwargs = {"layer_id": layer_id, "output_identifier": output_identifier}
+    if channel:
+        kwargs["channel"] = channel
+    return sp.call("set_source_output", kwargs)
+
+
+# ── 相机与显示增强 ────────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def sp_get_camera() -> dict:
+    """
+    读取主相机完整状态。
+
+    返回 position[x,y,z], rotation[x,y,z](欧拉角°), field_of_view(°),
+    focal_length(mm), focus_distance, aperture, orthographic_height, projection_type。
+
+    用于 AI 理解当前视角，在 sp_set_camera 前查询当前值避免非预期跳变。
+    """
+    return sp.call("get_camera")
+
+
+@mcp.tool()
+def sp_get_tone_mapping() -> dict:
+    """
+    获取当前色调映射函数（Linear 或 ACES）。
+
+    仅在非色彩管理模式下有效；色彩管理模式下返回 error 提示。
+    """
+    return sp.call("get_tone_mapping")
+
+
+@mcp.tool()
+def sp_set_tone_mapping(function: str = "ACES") -> dict:
+    """
+    设置色调映射函数。
+
+    function  "Linear"（线性转 sRGB，裁剪 >1 值）
+              "ACES"（学院色彩编码系统标准重映射）
+
+    仅在非色彩管理模式下有效。
+    """
+    if function not in ("Linear", "ACES"):
+        raise ValueError(f"function must be 'Linear' or 'ACES', got {function!r}")
+    return sp.call("set_tone_mapping", {"function": function})
+
+
+@mcp.tool()
+def sp_get_color_lut() -> dict:
+    """
+    获取当前项目使用的色彩 LUT 配置文件。
+
+    返回 None 表示未使用色彩配置文件。
+    """
+    return sp.call("get_color_lut")
+
+
+@mcp.tool()
+def sp_set_color_lut(resource_name: str) -> dict:
+    """
+    按名称设置色彩 LUT 配置文件。
+
+    resource_name  资源名称（模糊匹配），如 "sepia"、"Greyscale"、"Invert" 等。
+                   用 sp_list_all_resources 可查看可用的 colorluts。
+
+    设为空字符串 "" 则清除色彩 LUT。
+    """
+    return sp.call("set_color_lut", {"resource_name": resource_name})
+
+
+@mcp.tool()
+def sp_get_scene_bounding_box() -> dict:
+    """
+    获取场景包围盒。
+
+    返回 dimensions[x,y,z]、center[x,y,z]、radius。
+    用于 AI 计算相机取景距离、判断模型尺度。
+    """
+    return sp.call("get_scene_bounding_box")
+
+
 # ── 入口 ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:

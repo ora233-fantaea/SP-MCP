@@ -42,7 +42,13 @@ def _make_sp_mock():
     # ── substance_painter.layerstack ──
     layerstack = types.ModuleType("substance_painter.layerstack")
 
-    class _Enum:
+    class _EnumMeta(type):
+        def __iter__(cls):
+            for k, v in cls.__dict__.items():
+                if not k.startswith("_") and isinstance(v, _Enum):
+                    yield v
+
+    class _Enum(metaclass=_EnumMeta):
         def __init__(self, name):
             self.name = name
         def __repr__(self):
@@ -54,6 +60,12 @@ def _make_sp_mock():
         Metallic   = _Enum("Metallic")
         Height     = _Enum("Height")
         Normal     = _Enum("Normal")
+        Emissive   = _Enum("Emissive")
+        Specular   = _Enum("Specular")
+        Opacity    = _Enum("Opacity")
+        AmbientOcclusion = _Enum("AmbientOcclusion")
+        Scattering = _Enum("Scattering")
+        Translucency = _Enum("Translucency")
 
     class BlendingMode(_Enum):
         Normal   = _Enum("Normal")
@@ -78,6 +90,8 @@ def _make_sp_mock():
             self._children = []
             self._stack = None
             self._has_mask = False
+            self._material_source = None
+            self._source_mode = None
 
         def uid(self):
             return self._uid
@@ -177,6 +191,9 @@ def _make_sp_mock():
             "add_child": add_child, "sub_layers": sub_layers, "add_mask": add_mask,
             "get_parent": get_parent, "get_next_sibling": get_next_sibling,
             "get_previous_sibling": get_previous_sibling,
+            "source_mode": property(lambda self: self._source_mode),
+            "get_material_source": lambda self: self._material_source,
+            "active_channels": property(lambda self: list(self._sources.keys())),
         }
         return type(class_name, (), ns)
 
@@ -343,6 +360,177 @@ def _make_sp_mock():
             return [self._r, self._g, self._b]
     colormanagement.Color = MockCMColor
 
+    # ── substance_painter.source ──
+    source_mod = types.ModuleType("substance_painter.source")
+
+    class SourceMode(_Enum):
+        Split  = _Enum("Split")
+        Material = _Enum("Material")
+
+    class MockResourceID:
+        def __init__(self, name, ctx="user"):
+            self.context = ctx
+            self.name = name
+            self.version = "1.0"
+        def url(self):
+            return f"resource://{self.context}/{self.name}"
+
+    # Re-use the existing MockColor from colormanagement
+    _MockCMColor = MockCMColor  # alias for color helper
+
+    class SourceSubstance:
+        def __init__(self, resource_name="mock_substance"):
+            self._params = {"scale": 1.0, "dirt_level": 0.5, "wear_amount": 0.2}
+            self._props = {}
+            self._outputs = ["output", "roughness", "metallic"]
+            self._inputs = ["height", "mask"]
+            self._active_output = "output"
+            self._mask_output = None
+            self._resource_id = MockResourceID(resource_name)
+            self._presets = ["Default", "Worn", "Polished", "Rusty"]
+            self._mapping = {}
+        @property
+        def resource_id(self):
+            return self._resource_id
+        def get_parameters(self):
+            return {k: PropertyValue(v) for k, v in self._params.items()}
+        def set_parameters(self, params):
+            for k, v in params.items():
+                self._params[k] = v.value() if hasattr(v, 'value') else v
+        def get_properties(self):
+            return {k: Property(k, v) for k, v in self._params.items()}
+        def get_preset_list(self):
+            return list(self._presets)
+        def apply_preset(self, name):
+            if name not in self._presets:
+                raise ValueError(f"Preset {name!r} not found")
+        @property
+        def image_inputs(self):
+            return list(self._inputs)
+        @property
+        def image_outputs(self):
+            return list(self._outputs)
+        @property
+        def active_output(self):
+            return self._active_output
+        @active_output.setter
+        def active_output(self, v):
+            if v not in self._outputs:
+                raise ValueError(f"Output {v!r} not found")
+            self._active_output = v
+        @property
+        def mask_output(self):
+            return self._mask_output
+        @mask_output.setter
+        def mask_output(self, v):
+            self._mask_output = v
+        @property
+        def output_mapping(self):
+            return dict(self._mapping)
+
+    class SourceUniformColor:
+        def __init__(self, r=0.5, g=0.5, b=0.5):
+            self._color = MockCMColor(r, g, b)
+        def get_color(self):
+            return self._color
+
+    class SourceBitmap:
+        def __init__(self, resource_name="mock_bitmap"):
+            self._resource_id = MockResourceID(resource_name) if resource_name else None
+            self._color_space = _Enum("sRGB")
+        @property
+        def resource_id(self):
+            return self._resource_id
+        def get_color_space(self):
+            return self._color_space
+
+    class SourceReference:
+        def __init__(self):
+            self._anchor = None
+            self._alpha_matte = _Enum("Disabled")
+        @property
+        def anchor(self):
+            return self._anchor
+        @property
+        def alpha_matte(self):
+            return self._alpha_matte
+
+    class SourceFont:
+        def __init__(self, resource_name="mock_font"):
+            self._resource_id = MockResourceID(resource_name)
+            self._params = _FontParams()
+        @property
+        def resource_id(self):
+            return self._resource_id
+        def get_parameters(self):
+            return self._params
+
+    class _FontParams:
+        def __init__(self):
+            self.text = "Sample"
+            self.size = 24
+
+    class SourceVectorial:
+        def __init__(self, resource_name="mock_svg"):
+            self._resource_id = MockResourceID(resource_name)
+        @property
+        def resource_id(self):
+            return self._resource_id
+        def get_parameters(self):
+            return _VectorialParams()
+
+    class _VectorialParams:
+        def __init__(self):
+            self.artboard_id = "default"
+            self.scope = "fill"
+
+    # 分辨率相关枚举
+    class FontResolutionMode(_Enum):
+        Absolute = _Enum("Absolute")
+        Relative = _Enum("Relative")
+
+    class VectorialResolutionMode(_Enum):
+        Static = _Enum("Static")
+        Dynamic = _Enum("Dynamic")
+
+    source_mod.SourceMode = SourceMode
+    source_mod.SourceSubstance = SourceSubstance
+    source_mod.SourceUniformColor = SourceUniformColor
+    source_mod.SourceBitmap = SourceBitmap
+    source_mod.SourceReference = SourceReference
+    source_mod.SourceFont = SourceFont
+    source_mod.SourceVectorial = SourceVectorial
+    source_mod.FontResolutionMode = FontResolutionMode
+    source_mod.VectorialResolutionMode = VectorialResolutionMode
+    source_mod.MockResourceID = MockResourceID
+
+    # ── substance_painter.properties ──
+    properties_mod = types.ModuleType("substance_painter.properties")
+
+    class PropertyValue:
+        def __init__(self, value):
+            if isinstance(value, PropertyValue):
+                value = value._value
+            self._value = value
+        def value(self):
+            return self._value
+        def __repr__(self):
+            return f"PropertyValue({self._value!r})"
+
+    class Property:
+        def __init__(self, name, value):
+            self._name = name
+            self._value = value
+        def type(self):
+            return _Enum("Float1")
+        def description(self):
+            return f"Parameter: {self._name}"
+        def value(self):
+            return PropertyValue(self._value)
+
+    properties_mod.PropertyValue = PropertyValue
+    properties_mod.Property = Property
+
     # ── substance_painter.textureset ──
     textureset = types.ModuleType("substance_painter.textureset")
 
@@ -384,10 +572,19 @@ def _make_sp_mock():
     # ── substance_painter.display ──
     display_mod = types.ModuleType("substance_painter.display")
 
-    class MockCamera:
+    class ToneMappingFunction(_Enum):
+        Linear = _Enum("Linear")
+        ACES   = _Enum("ACES")
+
+    class MockCameraFull:
         _position = [0.0, 0.0, 5.0]
         _rotation = [0.0, 0.0, 0.0]
         _fov = 45.0
+        _focal_length = 50.0
+        _focus_distance = 100.0
+        _aperture = 2.8
+        _orthographic_height = 10.0
+        _projection_type = _Enum("Perspective")
         @property
         def position(self): return list(self._position)
         @position.setter
@@ -400,12 +597,51 @@ def _make_sp_mock():
         def field_of_view(self): return self._fov
         @field_of_view.setter
         def field_of_view(self, v): self._fov = v
+        @property
+        def focal_length(self): return self._focal_length
+        @focal_length.setter
+        def focal_length(self, v): self._focal_length = v
+        @property
+        def focus_distance(self): return self._focus_distance
+        @focus_distance.setter
+        def focus_distance(self, v): self._focus_distance = v
+        @property
+        def aperture(self): return self._aperture
+        @aperture.setter
+        def aperture(self, v): self._aperture = v
+        @property
+        def orthographic_height(self): return self._orthographic_height
+        @orthographic_height.setter
+        def orthographic_height(self, v): self._orthographic_height = v
+        @property
+        def projection_type(self): return self._projection_type
+        @projection_type.setter
+        def projection_type(self, v): self._projection_type = v
 
-    _mock_camera = MockCamera()
+    _mock_camera = MockCameraFull()
     display_mod.Camera = type("Camera", (), {
         "get_default_camera": staticmethod(lambda: _mock_camera),
     })
+    display_mod.ToneMappingFunction = ToneMappingFunction
     display_mod._mock_camera = _mock_camera
+
+    _mock_tone_mapping = ToneMappingFunction.Linear
+    def _get_tone_mapping():
+        return _mock_tone_mapping
+    def _set_tone_mapping(tm):
+        nonlocal _mock_tone_mapping
+        _mock_tone_mapping = tm
+    display_mod.get_tone_mapping = _get_tone_mapping
+    display_mod.set_tone_mapping = _set_tone_mapping
+
+    _mock_color_lut_resource = None
+    def _get_color_lut_resource():
+        return _mock_color_lut_resource
+    def _set_color_lut_resource(rid):
+        nonlocal _mock_color_lut_resource
+        _mock_color_lut_resource = rid
+    display_mod.get_color_lut_resource = _get_color_lut_resource
+    display_mod.set_color_lut_resource = _set_color_lut_resource
 
     _mock_env_resource = None
     def _set_environment_resource(res_id):
@@ -1008,6 +1244,8 @@ def _make_sp_mock():
     sp.js            = js_mod
     sp.export        = export
     sp.resource      = resource
+    sp.source        = source_mod
+    sp.properties    = properties_mod
 
     sys.modules["substance_painter"]            = sp
     sys.modules["substance_painter.application"] = app
@@ -1022,6 +1260,8 @@ def _make_sp_mock():
     sys.modules["substance_painter.js"]          = js_mod
     sys.modules["substance_painter.export"]      = export
     sys.modules["substance_painter.resource"]    = resource
+    sys.modules["substance_painter.source"]      = source_mod
+    sys.modules["substance_painter.properties"]  = properties_mod
 
     return sp, layerstack
 

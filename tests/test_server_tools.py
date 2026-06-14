@@ -81,6 +81,39 @@ def mock_bridge(monkeypatch):
             "bake_mesh_maps":          {"ok": True, "texture_set": params.get("texture_set_name", "")},
             "add_texture_set_channel": {"ok": True, "channel": params.get("channel_id", "")},
             "remove_texture_set_channel": {"ok": True, "channel": params.get("channel_id", "")},
+            # Phase 13: Source Control + Camera/Display
+            "get_source_info":           {"layer_id": "1", "node_type": "FillLayerNode",
+                                          "source_mode": "Material",
+                                          "material_source": {"type": "SourceSubstance",
+                                            "resource": {"context": "user", "name": "test_material"}}},
+            "get_substance_parameters":  {"layer_id": "1",
+                                          "parameters": {"scale": {"value": 1.0},
+                                                         "dirt_level": {"value": 0.5}}},
+            "set_substance_parameters":  {"ok": True, "layer_id": "1",
+                                          "updated": ["scale", "dirt_level"]},
+            "get_substance_presets":     {"layer_id": "1",
+                                          "presets": ["Default", "Worn", "Polished"]},
+            "apply_substance_preset":    {"ok": True, "layer_id": "1", "preset": "Worn"},
+            "get_source_outputs":        {"layer_id": "1",
+                                          "image_outputs": ["output", "roughness"],
+                                          "active_output": "output"},
+            "set_source_output":         {"ok": True, "layer_id": "1",
+                                          "active_output": "roughness"},
+            "get_camera":                {"position": [0.0, 0.0, 5.0],
+                                          "rotation": [0.0, 0.0, 0.0],
+                                          "field_of_view": 45.0,
+                                          "focal_length": 50.0,
+                                          "focus_distance": 100.0,
+                                          "aperture": 2.8,
+                                          "orthographic_height": 10.0,
+                                          "projection_type": "Perspective"},
+            "get_tone_mapping":          {"tone_mapping": "Linear"},
+            "set_tone_mapping":          {"ok": True, "tone_mapping": params.get("function", "ACES")},
+            "get_color_lut":             {"color_lut": None},
+            "set_color_lut":             {"ok": True, "color_lut": "Mock LUT"},
+            "get_scene_bounding_box":    {"dimensions": [10.0, 10.0, 10.0],
+                                          "center": [0.0, 0.0, 0.0],
+                                          "radius": 8.66},
         }
         if method not in responses:
             raise ValueError(f"Unknown method in mock: {method}")
@@ -445,6 +478,199 @@ class TestPhase9Tools:
         from server.sp_mcp import sp_remove_texture_set_channel
         with pytest.raises((ValueError, TypeError)):
             sp_remove_texture_set_channel(texture_set_name="Default", channel_id="")
+
+
+# ---------------------------------------------------------------------------
+# Phase 13: Source Control Tools
+# ---------------------------------------------------------------------------
+
+class TestSourceControlTools:
+    """sp_get_source_info / sp_get_substance_parameters / sp_set_substance_parameters /
+       sp_get_substance_presets / sp_apply_substance_preset / sp_get_source_outputs /
+       sp_set_source_output"""
+
+    # ── sp_get_source_info ──
+
+    def test_sp_get_source_info(self, mock_bridge):
+        from server.sp_mcp import sp_get_source_info
+        result = sp_get_source_info(layer_id="1")
+        assert result["layer_id"] == "1"
+        assert "source_mode" in result
+
+    def test_sp_get_source_info_with_channel(self, mock_bridge):
+        from server.sp_mcp import sp_get_source_info
+        result = sp_get_source_info(layer_id="1", channel="BaseColor")
+        assert result["layer_id"] == "1"
+
+    def test_sp_get_source_info_empty_id_raises(self, mock_bridge):
+        from server.sp_mcp import sp_get_source_info
+        with pytest.raises(ValueError, match="layer_id must not be empty"):
+            sp_get_source_info(layer_id="")
+
+    # ── sp_get_substance_parameters ──
+
+    def test_sp_get_substance_parameters(self, mock_bridge):
+        from server.sp_mcp import sp_get_substance_parameters
+        result = sp_get_substance_parameters(layer_id="1")
+        assert result["layer_id"] == "1"
+        assert "parameters" in result
+
+    def test_sp_get_substance_parameters_requires_layer(self, mock_bridge):
+        from server.sp_mcp import sp_get_substance_parameters
+        with pytest.raises(ValueError, match="layer_id must not be empty"):
+            sp_get_substance_parameters(layer_id="")
+
+    # ── sp_set_substance_parameters ──
+
+    def test_sp_set_substance_parameters(self, mock_bridge):
+        from server.sp_mcp import sp_set_substance_parameters
+        result = sp_set_substance_parameters(
+            layer_id="1", params={"scale": 2.0, "dirt_level": 0.8}
+        )
+        assert result["ok"] is True
+
+    def test_sp_set_substance_parameters_empty_layer_raises(self, mock_bridge):
+        from server.sp_mcp import sp_set_substance_parameters
+        with pytest.raises(ValueError, match="layer_id must not be empty"):
+            sp_set_substance_parameters(layer_id="", params={"scale": 1.0})
+
+    def test_sp_set_substance_parameters_empty_params_raises(self, mock_bridge):
+        from server.sp_mcp import sp_set_substance_parameters
+        with pytest.raises(ValueError, match="params must be a non-empty dict"):
+            sp_set_substance_parameters(layer_id="1", params={})
+
+    def test_sp_set_substance_parameters_non_dict_raises(self, mock_bridge):
+        from server.sp_mcp import sp_set_substance_parameters
+        with pytest.raises(ValueError, match="params must be a non-empty dict"):
+            sp_set_substance_parameters(layer_id="1", params="not_a_dict")
+
+    # ── sp_get_substance_presets ──
+
+    def test_sp_get_substance_presets(self, mock_bridge):
+        from server.sp_mcp import sp_get_substance_presets
+        result = sp_get_substance_presets(layer_id="1")
+        assert result["layer_id"] == "1"
+        assert "presets" in result
+
+    def test_sp_get_substance_presets_empty_layer_raises(self, mock_bridge):
+        from server.sp_mcp import sp_get_substance_presets
+        with pytest.raises(ValueError, match="layer_id must not be empty"):
+            sp_get_substance_presets(layer_id="")
+
+    # ── sp_apply_substance_preset ──
+
+    def test_sp_apply_substance_preset(self, mock_bridge):
+        from server.sp_mcp import sp_apply_substance_preset
+        result = sp_apply_substance_preset(layer_id="1", preset_name="Worn")
+        assert result["ok"] is True
+        assert result["preset"] == "Worn"
+
+    def test_sp_apply_substance_preset_empty_layer_raises(self, mock_bridge):
+        from server.sp_mcp import sp_apply_substance_preset
+        with pytest.raises(ValueError, match="layer_id must not be empty"):
+            sp_apply_substance_preset(layer_id="", preset_name="Worn")
+
+    def test_sp_apply_substance_preset_empty_preset_raises(self, mock_bridge):
+        from server.sp_mcp import sp_apply_substance_preset
+        with pytest.raises(ValueError, match="preset_name must not be empty"):
+            sp_apply_substance_preset(layer_id="1", preset_name="")
+
+    # ── sp_get_source_outputs ──
+
+    def test_sp_get_source_outputs(self, mock_bridge):
+        from server.sp_mcp import sp_get_source_outputs
+        result = sp_get_source_outputs(layer_id="1")
+        assert result["layer_id"] == "1"
+        assert "image_outputs" in result
+
+    def test_sp_get_source_outputs_empty_layer_raises(self, mock_bridge):
+        from server.sp_mcp import sp_get_source_outputs
+        with pytest.raises(ValueError, match="layer_id must not be empty"):
+            sp_get_source_outputs(layer_id="")
+
+    # ── sp_set_source_output ──
+
+    def test_sp_set_source_output(self, mock_bridge):
+        from server.sp_mcp import sp_set_source_output
+        result = sp_set_source_output(layer_id="1", output_identifier="roughness")
+        assert result["ok"] is True
+
+    def test_sp_set_source_output_empty_layer_raises(self, mock_bridge):
+        from server.sp_mcp import sp_set_source_output
+        with pytest.raises(ValueError, match="layer_id must not be empty"):
+            sp_set_source_output(layer_id="", output_identifier="roughness")
+
+    def test_sp_set_source_output_empty_output_raises(self, mock_bridge):
+        from server.sp_mcp import sp_set_source_output
+        with pytest.raises(ValueError, match="output_identifier must not be empty"):
+            sp_set_source_output(layer_id="1", output_identifier="")
+
+
+# ---------------------------------------------------------------------------
+# Phase 13: Camera / Display Tools
+# ---------------------------------------------------------------------------
+
+class TestCameraDisplayTools:
+    """sp_get_camera / sp_get_tone_mapping / sp_set_tone_mapping /
+       sp_get_color_lut / sp_set_color_lut / sp_get_scene_bounding_box"""
+
+    # ── sp_get_camera ──
+
+    def test_sp_get_camera(self, mock_bridge):
+        from server.sp_mcp import sp_get_camera
+        result = sp_get_camera()
+        expected_keys = {"position", "rotation", "field_of_view", "focal_length",
+                         "focus_distance", "aperture", "orthographic_height",
+                         "projection_type"}
+        assert set(result.keys()) == expected_keys
+
+    def test_sp_get_camera_position_is_list(self, mock_bridge):
+        from server.sp_mcp import sp_get_camera
+        result = sp_get_camera()
+        assert len(result["position"]) == 3
+        assert len(result["rotation"]) == 3
+
+    # ── sp_get_tone_mapping ──
+
+    def test_sp_get_tone_mapping(self, mock_bridge):
+        from server.sp_mcp import sp_get_tone_mapping
+        result = sp_get_tone_mapping()
+        assert "tone_mapping" in result
+
+    # ── sp_set_tone_mapping ──
+
+    def test_sp_set_tone_mapping(self, mock_bridge):
+        from server.sp_mcp import sp_set_tone_mapping
+        result = sp_set_tone_mapping(function="ACES")
+        assert result["ok"] is True
+
+    def test_sp_set_tone_mapping_invalid_raises(self, mock_bridge):
+        from server.sp_mcp import sp_set_tone_mapping
+        with pytest.raises(ValueError, match="must be 'Linear' or 'ACES'"):
+            sp_set_tone_mapping(function="InvalidMode")
+
+    # ── sp_get_color_lut ──
+
+    def test_sp_get_color_lut(self, mock_bridge):
+        from server.sp_mcp import sp_get_color_lut
+        result = sp_get_color_lut()
+        assert "color_lut" in result
+
+    # ── sp_set_color_lut ──
+
+    def test_sp_set_color_lut(self, mock_bridge):
+        from server.sp_mcp import sp_set_color_lut
+        result = sp_set_color_lut(resource_name="sepia")
+        assert result["ok"] is True
+
+    # ── sp_get_scene_bounding_box ──
+
+    def test_sp_get_scene_bounding_box(self, mock_bridge):
+        from server.sp_mcp import sp_get_scene_bounding_box
+        result = sp_get_scene_bounding_box()
+        assert set(result.keys()) == {"dimensions", "center", "radius"}
+        assert len(result["dimensions"]) == 3
+        assert len(result["center"]) == 3
 
 
 # ---------------------------------------------------------------------------
