@@ -63,6 +63,18 @@ def sp_get_texture_sets(filter: str = "") -> list:
 
 
 @mcp.tool()
+def sp_find_layer_by_name(name: str) -> dict:
+    """
+    在所有纹理集中按名称搜索图层（大小写不敏感）。
+    返回匹配的图层列表，每个包含 id、name、type、texture_set、depth。
+    用于在不知道 layer_id 时定位目标图层。
+    """
+    if not name:
+        raise ValueError("name must not be empty")
+    return sp.call("find_layer_by_name", {"name": name})
+
+
+@mcp.tool()
 def sp_get_layer_properties(layer_id: str) -> dict:
     """
     返回指定图层的详细属性（opacity、enabled、blend_mode 等）。
@@ -169,6 +181,29 @@ def sp_add_smart_mask(layer_id: str, mask_name: str) -> dict:
 
 
 @mcp.tool()
+def sp_add_mask(layer_id: str) -> dict:
+    """
+    为图层添加一个空白白色遮罩（非程序化 Smart Mask）。
+    添加后可用 sp_set_layer_channel 调整遮罩通道。
+    如需程序化遮罩（自动边缘磨损等），用 sp_add_smart_mask。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("add_mask", {"layer_id": layer_id})
+
+
+@mcp.tool()
+def sp_remove_mask(layer_id: str) -> dict:
+    """
+    移除图层的遮罩（不支持程序化 Smart Mask）。
+    注意：Smart Mask 的遮罩需要用 sp_delete_layer 删除整个 mask effect。
+    """
+    if not layer_id:
+        raise ValueError("layer_id must not be empty")
+    return sp.call("remove_mask", {"layer_id": layer_id})
+
+
+@mcp.tool()
 def sp_list_materials(filter: str = "") -> list:
     """
     列出 Shelf 中可用的普通材质（SUBSTANCE 类型），支持关键词过滤。
@@ -244,6 +279,16 @@ def sp_check_iray_render() -> dict:
 
 
 @mcp.tool()
+def sp_get_iray_params() -> dict:
+    """
+    读取当前 Iray 渲染面板的参数设置。
+    返回 params 字典，包含各 spinbox 的 objectName 和当前值。
+    用于在修改前确认当前渲染配置。
+    """
+    return sp.call("get_iray_params")
+
+
+@mcp.tool()
 def sp_capture_viewport(mode: str = "quick") -> dict:
     """
     截取当前 3D viewport，返回 base64 编码的 PNG 图像。
@@ -262,6 +307,15 @@ def sp_capture_viewport(mode: str = "quick") -> dict:
 
 
 # ── 导出 ──────────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+def sp_list_export_presets() -> list:
+    """
+    列出所有可用的导出预设名称。
+    在调用 sp_export_textures 之前，先用此工具确认 preset 参数的正确值。
+    """
+    return sp.call("list_export_presets")
+
 
 @mcp.tool()
 def sp_export_textures(preset: str, output_dir: str) -> dict:
@@ -332,43 +386,6 @@ def sp_add_paint_layer(name: str) -> dict:
     return sp.call("add_paint_layer", {"name": name})
 
 
-_UNDO_REDO_CODE = """\
-from substance_painter.ui import get_main_window
-from PySide2.QtWidgets import QUndoView
-mv = get_main_window()
-views = mv.findChildren(QUndoView)
-for v in views:
-    if v.objectName() == 'history':
-        s = v.stack()
-        if s.canUndo():
-            s.undo()
-            print('ok')
-        else:
-            print('empty')
-        break
-else:
-    print('not_found')
-"""
-
-_REDO_CODE = """\
-from substance_painter.ui import get_main_window
-from PySide2.QtWidgets import QUndoView
-mv = get_main_window()
-views = mv.findChildren(QUndoView)
-for v in views:
-    if v.objectName() == 'history':
-        s = v.stack()
-        if s.canRedo():
-            s.redo()
-            print('ok')
-        else:
-            print('empty')
-        break
-else:
-    print('not_found')
-"""
-
-
 @mcp.tool()
 def sp_undo() -> dict:
     """
@@ -376,14 +393,7 @@ def sp_undo() -> dict:
     通过 SP 原生 undo 栈实现，用户在 SP 按 Ctrl+Z 也能撤销 MCP 操作。
     所有 layerstack API 操作（add/delete/modify）自动推入 SP undo 栈。
     """
-    result = sp.call("run_python", {"code": _UNDO_REDO_CODE})
-    output = result.get("stdout", "").strip() if isinstance(result, dict) else ""
-    if output == "ok":
-        return {"ok": True}
-    elif output == "empty":
-        return {"ok": False, "error": "Nothing to undo"}
-    else:
-        return {"ok": False, "error": "Undo history not found"}
+    return sp.call("undo", {})
 
 
 @mcp.tool()
@@ -393,14 +403,7 @@ def sp_redo() -> dict:
     通过 SP 原生 redo 栈实现，用户在 SP 按 Ctrl+Y 也能重做 MCP 操作。
     所有 layerstack API 操作（add/delete/modify）自动推入 SP undo 栈。
     """
-    result = sp.call("run_python", {"code": _REDO_CODE})
-    output = result.get("stdout", "").strip() if isinstance(result, dict) else ""
-    if output == "ok":
-        return {"ok": True}
-    elif output == "empty":
-        return {"ok": False, "error": "Nothing to redo"}
-    else:
-        return {"ok": False, "error": "Undo history not found"}
+    return sp.call("redo", {})
 
 
 @mcp.tool()

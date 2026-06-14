@@ -135,7 +135,7 @@ mcp_servers:
 
 ---
 
-## 🛠️ MCP Tools (52 个)
+## 🛠️ MCP Tools (57 个)
 
 > [!TIP]
 > 所有图层修改操作（`add_fill_layer`、`set_layer_channel`、`apply_smart_material` 等）自动包裹 `ScopedModification`，**每个 API 调用 = 1 条 undo**。

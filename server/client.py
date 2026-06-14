@@ -11,8 +11,9 @@ import os
 import requests
 
 _PORT = int(os.environ.get("SP_BRIDGE_PORT", 27182))
-_BASE_URL = f"http://127.0.0.1:{_PORT}"
-_TIMEOUT = 60.0
+_HOST = os.environ.get("SP_BRIDGE_HOST", "127.0.0.1")
+_BASE_URL = f"http://{_HOST}:{_PORT}"
+_TIMEOUT = float(os.environ.get("SP_BRIDGE_TIMEOUT", 60.0))
 
 
 def call(method: str, params: dict | None = None, timeout: float | None = None) -> object:

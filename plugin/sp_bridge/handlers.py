@@ -15,6 +15,33 @@ SP 10.x 实际 API：
 import contextlib
 import io
 import base64
+import traceback as _traceback
+
+
+def _log_info(msg: str):
+    """Log an informational audit message to SP's logging system."""
+    try:
+        import substance_painter.logging
+        substance_painter.logging.log(
+            substance_painter.logging.INFO,
+            "sp_bridge",
+            msg,
+        )
+    except Exception:
+        pass
+
+
+def _log_warning(msg: str):
+    """Log a warning to SP's logging system. Silently ignored if unavailable (tests)."""
+    try:
+        import substance_painter.logging
+        substance_painter.logging.log(
+            substance_painter.logging.WARNING,
+            "sp_bridge",
+            msg,
+        )
+    except Exception:
+        pass
 
 
 
@@ -75,6 +102,10 @@ def _copy_channels(src_node, dst_node):
                 else:
                     dst_node.set_source(ch, src)
         except (AttributeError, TypeError):
+            _log_warning(
+                f"_copy_channels: failed to copy source for channel {ch} "
+                f"on node {type(src_node).__name__} — {_traceback.format_exc()}"
+            )
             pass
 
 
@@ -220,6 +251,7 @@ def add_fill_layer(
 
         new_id = str(layer.uid())
 
+        _log_info(f"add_fill_layer: name={name!r} id={new_id}")
         return {"id": new_id, "name": layer.get_name()}
 
 
@@ -262,6 +294,7 @@ def apply_smart_material(layer_id: str, material_name: str) -> dict:
 
         pos = ls.InsertPosition.above_node(node)
         group = ls.insert_smart_material(pos, resource.identifier())
+        _log_info(f"apply_smart_material: layer={layer_id!r} material={material_name!r} group={str(group.uid())}")
         return {"id": str(group.uid()), "name": group.get_name()}
 
 
@@ -328,6 +361,11 @@ def apply_material(layer_id: str, material_name: str) -> dict:
             try:
                 node.set_source(ch, rid)
             except Exception:
+                _log_warning(
+                    f"apply_material: failed to set source for channel {ch} "
+                    f"on layer {layer_id!r} with material {material_name!r} — "
+                    f"{_traceback.format_exc()}"
+                )
                 pass
         return {"ok": True, "material": material_name, "layer_id": str(node.uid())}
 
@@ -349,7 +387,9 @@ def export_textures(preset: str, output_dir: str) -> dict:
     config.export_path = output_dir
     config.preset = preset
     result = substance_painter.export.export_project_textures(config)
-    return {"files": [str(f) for f in result.textures]}
+    files = [str(f) for f in result.textures]
+    _log_info(f"export_textures: preset={preset!r} output_dir={output_dir!r} files={len(files)}")
+    return {"files": files}
 
 
 def run_python(code: str) -> dict:
@@ -370,6 +410,7 @@ def delete_layer(layer_id: str) -> dict:
     with _auto_batch("Delete layer"):
         node = _find_layer(layer_id)
         import substance_painter.layerstack as ls
+        _log_info(f"delete_layer: id={layer_id!r} name={node.get_name()!r}")
         ls.delete_node(node)
 
         return {"ok": True}
@@ -552,6 +593,10 @@ def duplicate_layer(layer_id: str) -> dict:
                         raw = c.value_raw
                         new_node.set_source(ch, cm.Color(raw[0], raw[1], raw[2]))
                 except (AttributeError, TypeError):
+                    _log_warning(
+                        f"duplicate_layer: failed to copy channel {ch} "
+                        f"on layer {layer_id!r} — {_traceback.format_exc()}"
+                    )
                     pass
 
         new_id = str(new_node.uid())
@@ -598,6 +643,9 @@ def group_layers(layer_ids: list) -> dict:
                     _flatten(n.sub_layers())
         _flatten(root_nodes)
         sorted_nodes = sorted(nodes, key=lambda n: all_flat.index(n) if n in all_flat else 9999)
+
+        if not sorted_nodes:
+            raise ValueError("group_layers: layer_ids must not be empty")
 
         first = sorted_nodes[0]
         group = ls.insert_group(ls.InsertPosition.above_node(first))
@@ -664,6 +712,7 @@ def get_project_info() -> dict:
 def save_project() -> dict:
     import substance_painter.project
     substance_painter.project.save()
+    _log_info("save_project: saved")
     return {"ok": True}
 
 
@@ -769,6 +818,7 @@ def begin_batch(name: str) -> dict:
     import substance_painter.layerstack as ls
     _batch_scope = ls.ScopedModification(name)
     _batch_scope.__enter__()
+    _log_info(f"begin_batch: {name!r}")
     return {"ok": True, "batch_name": name}
 
 
@@ -779,6 +829,7 @@ def end_batch() -> dict:
         raise RuntimeError("No active batch. Call begin_batch() first.")
     _batch_scope.__exit__(None, None, None)
     _batch_scope = None
+    _log_info("end_batch: committed")
     return {"ok": True}
 
 
@@ -1239,6 +1290,101 @@ def sp_shortcut(action: str) -> dict:
 
 # ── 内部工具 ──────────────────────────────────────────────────────────────────
 
+def list_export_presets() -> list:
+    """列出所有可用的导出预设名称。"""
+    import substance_painter.resource as r
+    presets = []
+    for res in r.search(""):
+        try:
+            if res.type().name == "EXPORT_PRESET":
+                presets.append(res.gui_name())
+        except (ValueError, AttributeError):
+            continue
+    # Fallback: try JS API if resource search returns nothing
+    if not presets:
+        try:
+            import substance_painter.js as js
+            result = js.evaluate(
+                "alg.mapexport.presets().map(function(p){return p.name;})"
+            )
+            if isinstance(result, list):
+                presets = result
+        except Exception:
+            pass
+    return sorted(set(presets))
+
+
+def get_iray_params() -> dict:
+    """读取当前 Iray 渲染参数设置。"""
+    import substance_painter.ui
+    from PySide2.QtWidgets import QDockWidget, QSpinBox
+
+    win = substance_painter.ui.get_main_window()
+    panel = None
+    for dock in win.findChildren(QDockWidget):
+        if dock.objectName() == "irayParametersView":
+            panel = dock.widget()
+            break
+
+    if panel is None:
+        return {"error": "Iray panel not found"}
+
+    params = {}
+    for sb in panel.findChildren(QSpinBox):
+        name = sb.objectName()
+        if name:
+            params[name] = sb.value()
+
+    return {"params": params}
+
+
+def add_mask(layer_id: str) -> dict:
+    """为图层添加一个空白遮罩（非 Smart Mask）。"""
+    with _auto_batch("Add mask"):
+        import substance_painter.layerstack as ls
+        node = _find_layer(layer_id)
+        mask = node.add_mask(ls.MaskBackground.White)
+        return {"ok": True, "layer_id": layer_id}
+
+
+def remove_mask(layer_id: str) -> dict:
+    """移除图层的遮罩（如果有的话）。"""
+    with _auto_batch("Remove mask"):
+        import substance_painter.layerstack as ls
+        node = _find_layer(layer_id)
+        node.remove_mask()
+        return {"ok": True, "layer_id": layer_id}
+
+
+def find_layer_by_name(name: str) -> dict:
+    """在所有纹理集中按名称搜索图层，返回匹配的图层信息列表。"""
+    import substance_painter.textureset as ts
+    import substance_painter.layerstack as ls
+
+    results = []
+    for t in ts.all_texture_sets():
+        stack = t.get_stack()
+        root_nodes = ls.get_root_layer_nodes(stack)
+
+        def _search(nodes, depth=0):
+            for n in nodes:
+                if n.get_name().lower() == name.lower():
+                    results.append({
+                        "id": str(n.uid()),
+                        "name": n.get_name(),
+                        "type": type(n).__name__,
+                        "texture_set": t.name(),
+                        "depth": depth,
+                    })
+                if type(n).__name__ == "GroupLayerNode":
+                    _search(n.sub_layers(), depth + 1)
+
+        _search(root_nodes)
+    return {"matches": results}
+
+
+# ── 内部工具 ──────────────────────────────────────────────────────────────────
+
 def _serialize_nodes(nodes: list) -> list:
     """将 node 对象列表序列化为 JSON 兼容的图层树。"""
     import substance_painter.layerstack as ls
@@ -1386,7 +1532,7 @@ def start_iray_render() -> dict:
 def check_iray_render() -> dict:
     """检查 Iray 渲染状态。返回 iterations 和 time 信息。"""
     import substance_painter.ui
-    from PySide2.QtWidgets import QDockWidget
+    from PySide2.QtWidgets import QDockWidget, QLabel
 
     win = substance_painter.ui.get_main_window()
     panel = None
@@ -1398,8 +1544,8 @@ def check_iray_render() -> dict:
     if panel is None:
         return {"active": False, "error": "Iray panel not found"}
 
-    iterations_label = panel.findChild(type(panel), "iterationsLabel")
-    time_label = panel.findChild(type(panel), "timeLabel")
+    iterations_label = panel.findChild(QLabel, "iterationsLabel")
+    time_label = panel.findChild(QLabel, "timeLabel")
 
     result = {"active": _iray_render_state.get("active", False)}
     if iterations_label:
@@ -1515,4 +1661,11 @@ _REGISTRY: dict = {
     "mouse_scroll":             mouse_scroll,
     "mouse_drag":               mouse_drag,
     "key_send":                 key_send,
+    "sp_shortcut":              sp_shortcut,
+    # new tools
+    "list_export_presets":      list_export_presets,
+    "get_iray_params":          get_iray_params,
+    "add_mask":                 add_mask,
+    "remove_mask":              remove_mask,
+    "find_layer_by_name":       find_layer_by_name,
 }

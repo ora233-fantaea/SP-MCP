@@ -874,8 +874,13 @@ def _make_sp_mock():
         def __init__(self, text="", parent=None):
             if parent is None and isinstance(text, _MockWidget):
                 parent, text = text, ""
-            super().__init__("QLabel", parent)
-            self._text = text
+            # If parent is provided, first arg is the widget name; else it's label text
+            if parent is not None and isinstance(text, str) and text:
+                super().__init__(text, parent)
+                self._text = ""
+            else:
+                super().__init__("QLabel", parent)
+                self._text = text if isinstance(text, str) else ""
         def setText(self, t): self._text = t
         def text(self): return self._text
         def setAlignment(self, a): pass
@@ -939,8 +944,8 @@ def _make_sp_mock():
     _height_sb.setValue(1080)
 
     # iterationsLabel / timeLabel
-    _MockWidget("iterationsLabel", _iray_panel)
-    _MockWidget("timeLabel", _iray_panel)
+    _MockQLabel("iterationsLabel", _iray_panel)
+    _MockQLabel("timeLabel", _iray_panel)
 
     # Iray QAction
     _iray_action = _MockQAction("Rendering (Iray)", enabled=True)
