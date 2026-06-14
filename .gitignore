@@ -1,3 +1,26 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# 虚拟环境
+.venv/
+venv/
+
+# 日志
+*.log
+sp_bridge.log
+
+# IDE
+.vscode/
+.idea/
+
+# 系统
+Thumbs.db
+.DS_Store
+
+# 项目缓存与临时文件
+*.spp
+*.spt
+
+# AI 辅助会话记录
+.claude/
