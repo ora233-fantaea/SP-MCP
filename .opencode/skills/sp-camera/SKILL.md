@@ -121,3 +121,15 @@ h.frame_mesh()
 6. [轮询 sp_check_iray_render]
 7. sp_capture_viewport("render")      最终确认
 ```
+
+> 📘 Iray 渲染的详细参数调优、进度监控、常见问题见 [sp-iray](../sp-iray/SKILL.md)。
+
+---
+
+## Related Skills
+
+- [sp-index](../sp-index/SKILL.md) — 所有 skill 的索引
+- [sp-iray](../sp-iray/SKILL.md) — Iray 渲染引擎详解（参数、进度、问题排查）
+- [sp-creative-workflow](../sp-creative-workflow/SKILL.md) — 截图驱动的材质迭代
+- [sp-computer-use](../sp-computer-use/SKILL.md) — CU 方式旋转视角（Alt+拖拽）
+- [sp-export-pipeline](../sp-export-pipeline/SKILL.md) — 渲染后导出贴图

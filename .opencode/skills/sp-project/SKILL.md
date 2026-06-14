@@ -156,3 +156,13 @@ sp_end_batch()
 4. sp_end_batch()
 5. sp_save_project()
 ```
+
+---
+
+## Related Skills
+
+- [sp-index](../sp-index/SKILL.md) — 所有 skill 的索引
+- [sp-layer-ops](../sp-layer-ops/SKILL.md) — 图层操作 API（batch 包裹的对象）
+- [sp-texture-set](../sp-texture-set/SKILL.md) — 纹理集管理
+- [sp-quickstart](../sp-quickstart/SKILL.md) — 首次连接验证
+- [sp-creative-workflow](../sp-creative-workflow/SKILL.md) — 批量操作在材质创作中的实际应用

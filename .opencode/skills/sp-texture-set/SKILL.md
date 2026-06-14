@@ -116,3 +116,69 @@ name 必须与 `sp_get_texture_sets` 返回的名称**完全一致**（大小写
 ```
 
 **批量操作：** 用 `sp_begin_batch` / `sp_end_batch` 包裹多个纹理集的操作，用户 Ctrl+Z 可一次撤销。
+
+---
+
+## 烘焙 Mesh Maps 专题
+
+`sp_bake_mesh_maps(texture_set_name)` 是高风险操作——它会**阻塞主线程**，期间所有 bridge 请求 timeout。
+
+### 烘焙时机
+
+烘焙应该在**任何 Smart Material / Smart Mask 操作之前**完成，因为这些功能依赖 AO、Curvature、Normal 等 mesh maps。
+
+### 烘焙前提
+
+- 模型有正确的 UV 展开（所有 UV shell 不重叠）
+- 高模和低模已正确设置（如果需要法线烘焙）
+- SP 项目中的烘焙参数已配置（Cage、Max Frontal Distance 等）
+
+### 标准流程
+
+```
+1. sp_get_texture_sets()                        确认纹理集名称
+2. sp_save_project()                            先保存（烘焙不可撤销）
+3. sp_bake_mesh_maps("TextureSetName")          执行烘焙（阻塞！）
+4. [等待 30s–5min]                              取决于模型复杂度和分辨率
+5. sp_ping()                                    确认 bridge 恢复响应
+6. sp_capture_viewport("quick")                 确认烘焙效果
+```
+
+### 烘焙产出的 Mesh Maps
+
+| Map | 通道名 | 用途 |
+|-----|--------|------|
+| Ambient Occlusion | AO | Smart Mask 的基础输入（凹陷/遮挡） |
+| Curvature | Curvature | 边缘磨损/凸起检测 |
+| World Space Normal | Normal (WS) | 方向性 mask |
+| Position | Position | 位置渐变 |
+| Thickness | Thickness | 薄壁检测 |
+| ID Map | ID | 按材质 ID 分区 |
+
+### 烘焙后验证
+
+```
+sp_capture_viewport("quick")  → 检查模型表面是否有烘焙结果
+```
+
+如果 Smart Mask 效果不对（如 Dirt 全黑或无效果），很可能是烘焙未完成或参数不对。
+
+### 常见烘焙问题
+
+| 问题 | 原因 | 解决 |
+|------|------|------|
+| 烘焙期间全部 timeout | 主线程阻塞中 | 正常现象，等待完成 |
+| 烘焙失败（返回 error） | 模型 UV 有问题 | 在 SP 中检查 UV 和烘焙设置 |
+| 烘焙后 Smart Mask 无效果 | AO/Curvature map 缺失 | `sp_get_texture_sets` 确认通道列表含 AO |
+| 法线贴图显示异常 | OpenGL/DirectX 格式不匹配 | 在 SP 烘焙设置中切换法线格式 |
+| 烘焙耗时极长 | 分辨率过高或模型太复杂 | 先用低分辨率测试，确认没问题再提高 |
+
+---
+
+## Related Skills
+
+- [sp-index](../sp-index/SKILL.md) — 所有 skill 的索引
+- [sp-smart-material](../sp-smart-material/SKILL.md) — 烘焙是 Smart Material/Mask 的前置步骤
+- [sp-layer-ops](../sp-layer-ops/SKILL.md) — 图层操作 API
+- [sp-project](../sp-project/SKILL.md) — 烘焙前后保存、批量操作
+- [sp-iray](../sp-iray/SKILL.md) — 烘焙后可能需要的 Iray 渲染确认

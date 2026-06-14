@@ -218,3 +218,14 @@ sp_begin_batch("Reorganize Layers")
 sp_end_batch()
 → 用户按 Ctrl+Z 一次撤销所有重组操作
 ```
+
+---
+
+## Related Skills
+
+- [sp-index](../sp-index/SKILL.md) — 所有 skill 的索引
+- [sp-smart-material](../sp-smart-material/SKILL.md) — Smart Material/Mask 选择策略和组合技巧
+- [sp-creative-workflow](../sp-creative-workflow/SKILL.md) — 材质创作迭代循环 + 配方示例
+- [sp-paint-layer](../sp-paint-layer/SKILL.md) — 绘画图层工作流
+- [sp-project](../sp-project/SKILL.md) — 批量操作、撤销/重做
+- [sp-texture-set](../sp-texture-set/SKILL.md) — 纹理集切换、烘焙

@@ -253,3 +253,13 @@ sp_cu_unlock()
 | 文字输入到错误位置 | 没先点击输入框 | 先 `sp_mouse_click` 聚焦目标 |
 | 操作触发了意外 UI | 坐标偏移计算错误 | 检查 `screen_origin` 或用 `relative="window"` |
 | Timeout / 30 秒无响应 | SP 弹出对话框阻塞 UI | 更新警示条文字提醒用户检查 SP 窗口 |
+
+---
+
+## Related Skills
+
+- [sp-index](../sp-index/SKILL.md) — 所有 skill 的索引
+- [sp-quickstart](../sp-quickstart/SKILL.md) — 首次连接验证（含 CU quickstart 变体）
+- [sp-debug](../sp-debug/SKILL.md) — CU 操作超时/报错的排查
+- [sp-camera](../sp-camera/SKILL.md) — 相机控制（可用 CU 拖拽旋转作为替代）
+- [sp-paint-layer](../sp-paint-layer/SKILL.md) — CU 手绘笔刷操控
