@@ -63,8 +63,7 @@ sp-mcp/
 │   │   ├── __init__.py             # 插件入口：start_plugin / close_plugin
 │   │   ├── bridge.py               # HTTP server（独立线程）+ QTimer 轮询队列调度
 │   │   └── handlers.py             # substance_painter.* API 的实际调用
-│   └── js/                      # QML 插件（可选）
-├── server/
+│   ├── server/
 │   ├── sp_mcp.py               # FastMCP server，暴露 MCP tools
 │   └── client.py               # 对 plugin HTTP bridge 的封装（requests）
 ├── tests/

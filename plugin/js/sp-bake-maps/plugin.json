@@ -1,7 +1,0 @@
-{
-  "description": "SP MCP - Mesh Map Baking Plugin",
-  "url": "https://github.com/sp-mcp",
-  "version": "1.0.0",
-  "license": "MIT",
-  "min_api_version": "1.0.0"
-}

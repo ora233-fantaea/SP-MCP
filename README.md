@@ -34,11 +34,10 @@
 
 ## ⚙️ 架构概述
 
-本项目包含三大部分：
+本项目包含两大部分：
 
 *   🔌 **`plugin/sp_bridge/` (SP 内嵌插件)**：作为 Painter 的 Python 插件运行，启动 HTTP Server（端口 `27182`），接收并执行 `substance_painter` API 调用。
 *   🌐 **`server/` (MCP Server)**：基于 `FastMCP` 搭建的外部服务，暴露 MCP Tools 给 AI 客户端。
-*   🖥️ **`plugin/js/` (QML 插件)**：SP 的 QML 插件，提供 UI 菜单项（Tools 菜单）。
 
 ```mermaid
 graph LR
@@ -57,18 +56,9 @@ graph LR
 
 ### 1. 部署 Painter 插件
 
-**Python 插件（必需）：**
-
-将 `plugin/sp_bridge/` 文件夹直接复制到以下路径：
+将 `plugin/sp_bridge/` 文件夹复制到以下路径：
 ```bash
 %USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\
-```
-
-**QML 插件（可选）：**
-
-将 `plugin/js/` 下的各个文件夹复制到：
-```bash
-%USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\plugins\
 ```
 
 > **成功标志**：安装完成后启动 Painter，Python Console 会显示：
