@@ -146,18 +146,19 @@ mcp_servers:
 </details>
 
 <details>
-<summary><b>📚 图层与纹理集读取 (4)</b></summary>
+<summary><b>📚 图层与纹理集读取 (5)</b></summary>
 
 | Tool | 说明 |
 |------|------|
 | `sp_get_layer_stack` | 返回当前纹理集的图层树 JSON（含 Group 递归） |
 | `sp_get_texture_sets` | 返回所有纹理集及图层结构，支持过滤 |
+| `sp_find_layer_by_name` | 跨纹理集按名称搜索图层，返回匹配列表 |
 | `sp_get_layer_properties` | 返回图层详细属性 |
 | `sp_get_layer_channels` | 返回所有通道的 opacity/blend/source |
 </details>
 
 <details>
-<summary><b>✏️ 图层与通道写入 (10)</b></summary>
+<summary><b>✏️ 图层与通道写入 (12)</b></summary>
 
 | Tool | 说明 |
 |------|------|
@@ -171,6 +172,8 @@ mcp_servers:
 | `sp_move_layer` | 移动图层到目标上方/下方 |
 | `sp_group_layers` | 打包图层进新分组 |
 | `sp_ungroup_layer` | 解散分组，子层提升到父级 |
+| `sp_add_mask` | 为图层添加遮罩（黑/白背景） |
+| `sp_remove_mask` | 移除图层遮罩 |
 </details>
 
 <details>
@@ -197,7 +200,7 @@ mcp_servers:
 </details>
 
 <details>
-<summary><b>📸 视觉反馈与渲染 (8)</b></summary>
+<summary><b>📸 视觉反馈与渲染 (10)</b></summary>
 
 | Tool | 说明 |
 |------|------|
@@ -206,8 +209,10 @@ mcp_servers:
 | `sp_frame_mesh` | 自动适配视图到模型 |
 | `sp_set_environment` | 切换 HDRI 环境光 |
 | `sp_set_iray_params` | 设置 Iray 参数 |
+| `sp_get_iray_params` | 读取当前 Iray 参数 |
 | `sp_start_iray_render`| 异步启动 Iray |
 | `sp_check_iray_render`| 检查渲染进度 |
+| `sp_list_export_presets` | 列出所有可用导出预设 |
 | `sp_export_textures` | 导出贴图 |
 </details>
 
