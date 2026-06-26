@@ -23,7 +23,7 @@ description: 通过截图回路驱动 Substance Painter 材质创作，包括视
 2. sp_capture_viewport(mode="quick") 看当前状态
 3. sp_get_layer_stack()              理解图层结构
 4. [决策] 根据截图制定材质方案
-5. 执行材质操作（add_fill_layer / apply_smart_material / apply_material）
+5. 执行材质操作（add_fill_layer / apply_smart_material / apply_material / add_effect / set_substance_parameters）
 6. sp_capture_viewport(mode="quick") 评估结果
 7. [评估] 满意 → 进入步骤 8，不满意 → 回步骤 5
 8. sp_capture_viewport(mode="render") Iray 最终确认（可选）
@@ -230,5 +230,8 @@ sp_end_batch()
 - [sp-layer-ops](../sp-layer-ops/SKILL.md) — 图层操作 API 完整参考
 - [sp-camera](../sp-camera/SKILL.md) — 调整视角、HDRI 环境光
 - [sp-iray](../sp-iray/SKILL.md) — Iray 渲染参数调优
-- [sp-project](../sp-project/SKILL.md) — 批量操作、撤销/重做
+- [sp-effect-nodes](../sp-effect-nodes/SKILL.md) — 效果节点（Filter/Generator/Levels 等）
+- [sp-substance-source](../sp-substance-source/SKILL.md) — 程序化源参数读写、预设切换
+- [sp-baking](../sp-baking/SKILL.md) — Python 烘焙 API
+- [sp-project](../sp-project/SKILL.md) — 批量操作、撤销/重做、项目生命周期
 - [sp-quickstart](../sp-quickstart/SKILL.md) — 首次连接时的验证流程

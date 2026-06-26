@@ -15,11 +15,31 @@ description: 控制 Substance Painter 相机位置/旋转/FOV、HDRI 环境光�
 | 操作前必读 | 说明 |
 |---|---|
 | `sp_capture_viewport("quick")` | 先看当前视角 |
-| `sp_run_python` 读 `cam.position` / `cam.rotation` | 修改前确认当前值 |
+| `sp_get_camera()` | 读取相机完整状态（position、rotation、FOV、focal length 等） |
+| `sp_get_tone_mapping()` | 读取当前色调映射设置 |
+| `sp_get_color_lut()` | 读取当前色彩 LUT 配置 |
 
 ---
 
 ## 相机控制
+
+### 读取相机状态
+
+**`sp_get_camera()`** — 读取主相机完整状态，一次性返回所有属性：
+
+```json
+{
+  "position": [x, y, z],
+  "rotation": [pitch, yaw, roll],
+  "field_of_view": 45.0,
+  "focal_length": 50.0,
+  "focus_distance": 100.0,
+  "aperture": 2.8,
+  "orthographic_height": 0.0
+}
+```
+
+⚠️ 以前需要用 `sp_run_python` 读 `cam.position` / `cam.rotation`，现在直接用 `sp_get_camera()`。
 
 ### set_camera 参数规则
 
@@ -76,6 +96,56 @@ h.frame_mesh()
 - `"Neutral"` — 中性灰，无色偏
 
 **工作流：** 先 `sp_capture_viewport("quick")` 看当前光照 → `sp_set_environment` 切换 → 再截图对比。
+
+---
+
+## 色调映射
+
+**`sp_get_tone_mapping()`** — 获取当前色调映射函数。
+
+**`sp_set_tone_mapping(function)`** — 设置色调映射函数。
+
+可选值：
+| 函数 | 效果 |
+|------|------|
+| `"Linear"` | 线性映射，无色调压缩 |
+| `"ACES"` | ACES 胶片色调映射，更自然的动态范围 |
+
+```
+sp_set_tone_mapping("ACES")
+sp_capture_viewport("quick")  确认效果
+```
+
+---
+
+## 色彩 LUT
+
+**`sp_get_color_lut()`** — 获取当前色彩 LUT 配置（返回 resource 名称或 null）。
+
+**`sp_set_color_lut(resource_name)`** — 按名称设置色彩 LUT 配置文件。
+
+```
+sp_set_color_lut("Film Look")
+```
+
+---
+
+## 场景包围盒
+
+**`sp_get_scene_bounding_box()`** — 获取场景 Axis-Aligned Bounding Box。
+
+```json
+{
+  "dimensions": [width, height, depth],
+  "center": [cx, cy, cz],
+  "radius": 150.5
+}
+```
+
+用途：
+- 计算相机距离（`frame_mesh` 内部使用）
+- 判断模型规模和位置
+- 与 Computer Use 配合定位 viewport 中模型位置
 
 ---
 

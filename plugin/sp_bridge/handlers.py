@@ -133,6 +133,7 @@ def _clone_node(src_node, insert_pos):
         new_node.set_name(src_node.get_name())
         new_node.set_visible(src_node.is_visible())
         _copy_channels(src_node, new_node)
+        _log_warning("PaintLayerNode clone copies channels only, not paint strokes")
     else:  # FillLayerNode (also handles other fill-like types)
         new_node = ls.insert_fill(insert_pos)
         new_node.set_name(src_node.get_name())
@@ -231,6 +232,7 @@ def add_fill_layer(
     with _auto_batch(f"Add Fill Layer '{name}'"):
         import substance_painter.layerstack as ls
         import substance_painter.textureset as ts
+        import substance_painter.colormanagement as cm
 
         stack = ts.get_active_stack()
         pos = ls.InsertPosition.from_textureset_stack(stack)
@@ -246,7 +248,7 @@ def add_fill_layer(
 
         if color_hex and channel.lower() == "basecolor":
             r, g, b = _hex_to_rgb(color_hex)
-            color = ls.Color(r, g, b)
+            color = cm.Color(r, g, b)
             layer.set_source(ch, color)
 
         new_id = str(layer.uid())
@@ -256,7 +258,7 @@ def add_fill_layer(
 
 
 def set_layer_property(layer_id: str, prop: str, value) -> dict:
-    _VALID_PROPS = {"opacity", "enabled", "name", "blend_mode"}
+    _VALID_PROPS = {"opacity", "visible", "enabled", "name", "blend_mode"}
     if prop not in _VALID_PROPS:
         raise ValueError(
             f"Unsupported prop: {prop!r}. Valid: {sorted(_VALID_PROPS)}"
@@ -268,7 +270,7 @@ def set_layer_property(layer_id: str, prop: str, value) -> dict:
 
         if prop == "opacity":
             node.set_opacity(float(value), ls.ChannelType.BaseColor)
-        elif prop == "enabled":
+        elif prop in ("visible", "enabled"):
             node.set_visible(bool(value))
         elif prop == "name":
             node.set_name(str(value))
@@ -276,7 +278,7 @@ def set_layer_property(layer_id: str, prop: str, value) -> dict:
             blend = getattr(ls.BlendingMode, str(value), None)
             if blend is None:
                 raise ValueError(f"Unknown blend mode: {value!r}")
-            node.set_blending_mode(blend)
+            node.set_blending_mode(blend, ls.ChannelType.BaseColor)
 
         return {"ok": True}
 
@@ -572,32 +574,11 @@ def duplicate_layer(layer_id: str) -> dict:
     with _auto_batch("Duplicate layer"):
         node = _find_layer(layer_id)
         import substance_painter.layerstack as ls
-        import substance_painter.textureset as ts
 
-        stack = ts.get_active_stack()
+        # 复用 _clone_node：它会递归复制 GroupLayerNode 的子层并拷贝通道，
+        # 避免此前 group 副本为空的问题。新副本插在原图层上方。
         pos = ls.InsertPosition.above_node(node)
-        new_node = ls.insert_fill(pos)
-        new_node.set_name(node.get_name())
-
-        # GroupLayerNode 没有 get_source，只复制 fill layer 的通道属性
-        if type(node).__name__ != "GroupLayerNode":
-            import substance_painter.colormanagement as cm
-            for ch in (ls.ChannelType.BaseColor, ls.ChannelType.Roughness,
-                       ls.ChannelType.Metallic, ls.ChannelType.Height, ls.ChannelType.Normal):
-                new_node.set_opacity(node.get_opacity(ch), ch)
-                new_node.set_blending_mode(node.get_blending_mode(ch), ch)
-                try:
-                    src = node.get_source(ch)
-                    if src is not None and hasattr(src, "get_color"):
-                        c = src.get_color()
-                        raw = c.value_raw
-                        new_node.set_source(ch, cm.Color(raw[0], raw[1], raw[2]))
-                except (AttributeError, TypeError):
-                    _log_warning(
-                        f"duplicate_layer: failed to copy channel {ch} "
-                        f"on layer {layer_id!r} — {_traceback.format_exc()}"
-                    )
-                    pass
+        new_node = _clone_node(node, pos)
 
         new_id = str(new_node.uid())
 
@@ -732,13 +713,13 @@ def set_camera(
     current_fov = cam.field_of_view
 
     # 位置：非零值才覆盖
-    new_x = x if x != 0.0 else px
-    new_y = y if y != 0.0 else py
-    new_z = z if z != 0.0 else pz
+    new_x = x if x is not None else px
+    new_y = y if y is not None else py
+    new_z = z if z is not None else pz
     cam.position = [new_x, new_y, new_z]
 
     # FOV：非零值才覆盖
-    cam.field_of_view = fov if fov != 0.0 else current_fov
+    cam.field_of_view = fov if fov is not None else current_fov
 
     # 目标点：有值时计算旋转朝向目标
     if target_x != 0.0 or target_y != 0.0 or target_z != 0.0:
@@ -814,7 +795,9 @@ def begin_batch(name: str) -> dict:
     if not name:
         raise ValueError("name must not be empty")
     if _batch_scope is not None:
-        raise RuntimeError("A batch is already active. Call end_batch() first.")
+        raise RuntimeError(
+            "A batch is already active. Call end_batch() before begin_batch()."
+        )
     import substance_painter.layerstack as ls
     _batch_scope = ls.ScopedModification(name)
     _batch_scope.__enter__()
@@ -827,8 +810,12 @@ def end_batch() -> dict:
     global _batch_scope
     if _batch_scope is None:
         raise RuntimeError("No active batch. Call begin_batch() first.")
-    _batch_scope.__exit__(None, None, None)
-    _batch_scope = None
+    try:
+        _batch_scope.__exit__(None, None, None)
+    except Exception as exc:
+        _log_info(f"end_batch error: {exc}")
+    finally:
+        _batch_scope = None
     _log_info("end_batch: committed")
     return {"ok": True}
 
@@ -837,10 +824,12 @@ def end_batch() -> dict:
 
 def bake_mesh_maps(texture_set_name: str) -> dict:
     """通过 JS API 烘焙指定纹理集的 mesh maps。"""
+    import json
     if not texture_set_name:
         raise ValueError("texture_set_name must not be empty")
     import substance_painter.js as js
-    js.evaluate(f'alg.baking.bake("{texture_set_name}")')
+    _ts = json.dumps(texture_set_name)
+    js.evaluate(f"alg.baking.bake({_ts})")
     return {"ok": True, "texture_set": texture_set_name}
 
 
@@ -853,10 +842,15 @@ def add_texture_set_channel(texture_set_name: str, channel_id: str,
     if not channel_id:
         raise ValueError("channel_id must not be empty")
     label = channel_label or channel_id
+    import json
     import substance_painter.js as js
+    _ts = json.dumps(texture_set_name)
+    _cid = json.dumps(channel_id)
+    _cf = json.dumps(channel_format)
+    _lbl = json.dumps(label)
     js.evaluate(
-        f'alg.texturesets.addChannel(["{texture_set_name}"], '
-        f'"{channel_id}", "{channel_format}", "{label}")'
+        f'alg.texturesets.addChannel([{_ts}], '
+        f'{_cid}, {_cf}, {_lbl})'
     )
     return {"ok": True, "channel": channel_id}
 
@@ -867,8 +861,9 @@ def remove_texture_set_channel(texture_set_name: str, channel_id: str) -> dict:
         raise ValueError("texture_set_name must not be empty")
     if not channel_id:
         raise ValueError("channel_id must not be empty")
+    import json
     import substance_painter.js as js
-    js.evaluate(f'alg.texturesets.removeChannel(["{texture_set_name}"], "{channel_id}")')
+    js.evaluate("alg.texturesets.removeChannel(" + json.dumps([texture_set_name]) + ", " + json.dumps(channel_id) + ")")
     return {"ok": True, "channel": channel_id}
 
 
@@ -912,8 +907,7 @@ def window_grab(region: dict = None) -> dict:
     hdc_mem = gdi32.CreateCompatibleDC(hdc_window)
     hbmp = gdi32.CreateCompatibleBitmap(hdc_window, full_w, full_h)
     gdi32.SelectObject(hdc_mem, hbmp)
-
-    # PW_RENDERFULLCONTENT = 2 — captures OpenGL rendered content correctly
+    # PW_RENDERFULLCONTENT = 2: capture OpenGL rendered content
     user32.PrintWindow(hwnd, hdc_mem, 2)
 
     if region and all(k in region for k in ("x", "y", "width", "height")):
@@ -1187,7 +1181,8 @@ _VK_MAP = {
     "insert": 0x2D, "ins": 0x2D,
     "home": 0x24,
     "end": 0x23,
-    "pageup": 0x21, "page_down": 0x22,
+    "pageup": 0x21, "page_up": 0x21,
+    "pagedown": 0x22, "page_down": 0x22,
     "left": 0x25, "right": 0x27, "up": 0x26, "down": 0x28,
     "shift": 0x10, "ctrl": 0x11, "control": 0x11,
     "alt": 0x12, "menu": 0x12,
@@ -1207,17 +1202,37 @@ def key_send(keys: str, modifiers: list = None) -> dict:
                 time.sleep(0.02)
 
     sent = []
+    # 整个 keys 是单个命名键（如 "enter"/"f4"/"delete"）时，按一次该键而非逐字符输入。
+    _named_vk = _VK_MAP.get(keys.lower()) if keys else None
+    if _named_vk is not None and len(keys) > 1:
+        _key_event(_named_vk)
+        time.sleep(0.01)
+        _key_event(_named_vk, up=True)
+        time.sleep(0.01)
+        sent.append(keys)
+        keys = ""
     for ch in keys:
+        # 命名键（enter/tab/f4/space/delete...）直接用 VK 映射，不经过 VkKeyScanW。
         vk = _VK_MAP.get(ch.lower())
+        shift_needed = False
         if vk is None and len(ch) == 1:
             import ctypes as ct
-            vk = ct.windll.user32.VkKeyScanW(ord(ch)) & 0xFF
-        if vk:
-            _key_event(vk)
+            scan = ct.windll.user32.VkKeyScanW(ord(ch))
+            if scan != -1:
+                shift_needed = bool((scan >> 8) & 1)
+                vk = scan & 0xFF
+        if not vk:
+            continue
+        if shift_needed:
+            _key_event(0x10)  # VK_SHIFT down
+        _key_event(vk)
+        time.sleep(0.01)
+        _key_event(vk, up=True)
+        time.sleep(0.01)
+        if shift_needed:
+            _key_event(0x10, up=True)  # VK_SHIFT up
             time.sleep(0.01)
-            _key_event(vk, up=True)
-            time.sleep(0.01)
-            sent.append(ch)
+        sent.append(ch)
 
     if modifiers:
         time.sleep(0.02)

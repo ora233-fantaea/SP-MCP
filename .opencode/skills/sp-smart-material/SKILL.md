@@ -38,6 +38,25 @@ Smart Material 是 Substance Painter 最核心的功能——它是一个**多�
 
 ## 浏览材质库
 
+### 按用途发现资源（推荐先调用）
+
+```
+sp_list_resources_by_usage(usage, search?)
+```
+
+这是发现资源的通用入口，覆盖 8 种资源类型：
+
+| usage | 对应资源 | 示例 |
+|-------|---------|------|
+| `"filter"` | 滤镜资源 | `sp_list_resources_by_usage("filter", "blur")` |
+| `"generator"` | 生成器资源 | `sp_list_resources_by_usage("generator", "noise")` |
+| `"substance"` | 程序化材质 | `sp_list_resources_by_usage("substance", "metal")` |
+| `"smart_material"` | Smart Material | `sp_list_resources_by_usage("smart_material", "steel")` |
+| `"smart_mask"` | Smart Mask | `sp_list_resources_by_usage("smart_mask", "dirt")` |
+| `"texture"` | 纹理 | `sp_list_resources_by_usage("texture", "wood")` |
+| `"environment"` | HDRI 环境光 | `sp_list_resources_by_usage("environment")` |
+| `"export_preset"` | 导出预设 | `sp_list_resources_by_usage("export_preset")` |
+
 ### 列出 Smart Material
 
 ```

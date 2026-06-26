@@ -56,21 +56,26 @@ name 必须与 `sp_get_texture_sets` 返回的名称**完全一致**（大小写
 
 ## 烘焙 Mesh Maps
 
-**`sp_bake_mesh_maps(texture_set_name)`** — 烘焙指定纹理集的 mesh maps（AO/Curvature/Normal 等）。
+SP-MCP 提供两套烘焙 API：
 
-通过 `js.evaluate("alg.baking.bake()")` 实现，需要 SP 10.0+。
+### Python Baking API（推荐，Phase 16）
 
-**注意事项：**
-- 烘焙会阻塞主线程，耗时较长
-- 需要模型有正确的 UV 展开
-- 烘焙结果会影响 Smart Material 和 Smart Mask 的效果
+完整的参数控制、状态管理、异步执行。5 个 tools：
 
-**工作流：**
-```
-1. sp_get_texture_sets()              确认纹理集名称
-2. sp_bake_mesh_maps("textureSetName")  烘焙
-3. sp_capture_viewport("quick")       确认烘焙效果
-```
+| Tool | 功能 |
+|------|------|
+| `sp_get_baking_parameters` | 读取 common + 各 baker 完整参数 |
+| `sp_set_baking_parameters` | 设置分辨率/高模路径/AO 参数等 |
+| `sp_bake_texture_set` | 异步启动烘焙 |
+| `sp_get_baking_state` | 获取启用/bakers/UV tiles/链接 |
+| `sp_set_baking_state` | 开关 baker/曲率方法/UV tiles |
+
+> 📘 详见 [sp-baking](../sp-baking/SKILL.md)。
+
+### JS API（Phase 9，兼容保留）
+
+**`sp_bake_mesh_maps(texture_set_name)`** — 通过 `alg.baking.bake()` 烘焙。
+使用当前 SP 烘焙设置，功能受限但调用简单。
 
 ---
 
@@ -178,6 +183,7 @@ sp_capture_viewport("quick")  → 检查模型表面是否有烘焙结果
 ## Related Skills
 
 - [sp-index](../sp-index/SKILL.md) — 所有 skill 的索引
+- [sp-baking](../sp-baking/SKILL.md) — Python 烘焙 API 详解（参数、状态、异步执行）
 - [sp-smart-material](../sp-smart-material/SKILL.md) — 烘焙是 Smart Material/Mask 的前置步骤
 - [sp-layer-ops](../sp-layer-ops/SKILL.md) — 图层操作 API
 - [sp-project](../sp-project/SKILL.md) — 烘焙前后保存、批量操作

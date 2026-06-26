@@ -24,3 +24,8 @@ Thumbs.db
 
 # AI 辅助会话记录
 .claude/
+.mcp.json
+
+.opencode/node_modules
+.opencode/package.json
+.opencode/package-lock.json

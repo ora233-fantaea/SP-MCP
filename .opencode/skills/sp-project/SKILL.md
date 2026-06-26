@@ -46,6 +46,58 @@ description: 管理 Substance Painter 项目：读取项目信息、保存、批
 
 ---
 
+## 项目生命周期（Phase 17）
+
+### 创建项目
+
+**`sp_create_project(mesh_file_path, ...)`** — 从网格文件创建新项目。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `mesh_file_path` | 必填 | 低模文件路径（.fbx / .obj 等） |
+| `mesh_map_file_paths` | `None` | 额外 mesh map 文件路径列表 |
+| `normal_map_format` | `"OpenGL"` | `"OpenGL"` / `"DirectX"` |
+| `tangent_space_mode` | `"PerFragment"` | `"PerFragment"` / `"PerVertex"` |
+| `project_workflow` | `"Default"` | `"Default"` / `"PBRMetallicRoughness"` / `"PBRSpecularGlossiness"` |
+| `import_cameras` | `False` | 是否导入网格文件中的相机 |
+| `default_texture_resolution` | `2048` | 默认纹理分辨率 |
+| `mesh_unit_scale` | `None` | 网格单位缩放因子 |
+
+⚠️ 只能在未打开项目时调用。如果已有项目打开，先 `sp_close_project()`。
+
+### 打开/关闭项目
+
+**`sp_open_project(file_path)`** — 打开已有 .spp 项目文件。
+
+**`sp_close_project()`** — 关闭当前项目（不保存，先调 `sp_save_project()` 保存）。
+
+### 重载网格
+
+**`sp_reload_mesh(mesh_file_path, import_cameras?, preserve_strokes?)`** — 异步替换项目网格。
+- `preserve_strokes=True` — 保留已绘制笔触（推荐）
+- 用于迭代模型时避免重建项目
+
+### 项目元数据
+
+项目元数据存储在 .spp 文件中，可用于标记项目状态、版本号等持久化信息。
+
+| Tool | 说明 |
+|------|------|
+| `sp_get_project_metadata(context, key)` | 读取 `context` 下的 `key` 值 |
+| `sp_set_project_metadata(context, key, value)` | 写入持久化键值对 |
+| `sp_list_project_metadata(context)` | 列出某 `context` 下所有键 |
+
+`context` 是命名空间，可以用 `"MCP"` 或自定义名称区分不同来源的数据。
+
+**典型用法：**
+```
+sp_set_project_metadata("MCP", "last_material", "Steel Rough")
+sp_set_project_metadata("MCP", "version", 3)
+sp_list_project_metadata("MCP")  → ["last_material", "version"]
+```
+
+---
+
 ## 撤销/重做
 
 **`sp_undo()`** — 撤销上一步操作。
@@ -164,5 +216,6 @@ sp_end_batch()
 - [sp-index](../sp-index/SKILL.md) — 所有 skill 的索引
 - [sp-layer-ops](../sp-layer-ops/SKILL.md) — 图层操作 API（batch 包裹的对象）
 - [sp-texture-set](../sp-texture-set/SKILL.md) — 纹理集管理
+- [sp-baking](../sp-baking/SKILL.md) — 烘焙前后保存
 - [sp-quickstart](../sp-quickstart/SKILL.md) — 首次连接验证
 - [sp-creative-workflow](../sp-creative-workflow/SKILL.md) — 批量操作在材质创作中的实际应用

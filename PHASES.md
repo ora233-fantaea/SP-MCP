@@ -46,7 +46,11 @@
 | Phase 11 | 外置 Undo/Redo 栈 | ✅ 已删除（改用 SP 原生 undo/redo） |
 | Phase 12 | 自动 batch + 文件重构 | ✅ 完成 |
 | Phase 13 | 四功能复现（move/group/ungroup/frame） | ✅ 完成 |
+| Phase 13b | 程序化源参数控制 + 相机/显示增强 | ✅ 完成 |
 | Phase 14 | Computer Use（窗口截图 + 鼠标/键盘控制） | ✅ 完成 |
+| Phase 15 | 效果节点（Filter/Generator/Levels/CompareMask/ColorSelection/Anchor） | ✅ 完成 |
+| Phase 16 | 烘焙 API（Python 原生：参数/状态/异步执行） | ✅ 完成 |
+| Phase 17 | 项目生命周期 + 元数据 + 资源发现 | ✅ 完成 |
 
 ---
 
@@ -840,6 +844,130 @@ plugin/                →  plugin/
 - 10 个 handler + 10 个 MCP tool + 12 个新测试（sp_shortcut）
 - 248 测试全绿（含已有 207）
 - handlers.py 增长 ~250 行，sp_mcp.py 增长 ~140 行
+
+---
+
+## Phase 13b — 程序化源参数控制 + 相机/显示增强
+
+**状态：** ✅ 完成
+
+**程序化源（SourceSubstance）参数控制（7 tools）：**
+
+| Tool | 功能 |
+|------|------|
+| `get_source_info(layer_id, channel?)` | 读取填充图层/效果的源信息（类型/颜色/资源/参数） |
+| `get_substance_parameters(layer_id, channel?)` | 读取程序化源当前参数值 + 类型/描述 |
+| `set_substance_parameters(layer_id, params, channel?)` | 批量修改源参数（`PropertyValue` 包装） |
+| `get_substance_presets(layer_id, channel?)` | 列出源的可用预设 |
+| `apply_substance_preset(layer_id, preset_name, channel?)` | 应用预设 |
+| `get_source_outputs(layer_id, channel?)` | 读取输出映射 |
+| `set_source_output(layer_id, output_id, channel?)` | 切换活动输出 |
+
+> 仅 `FillLayerNode` / `FillEffectNode` 且源为 `SourceSubstance` 时支持，否则抛 `ValueError`。
+
+**相机与显示增强（6 tools）：**
+
+| Tool | 功能 |
+|------|------|
+| `get_camera()` | 读取主相机完整状态（position/rotation/fov） |
+| `get_tone_mapping()` / `set_tone_mapping(function)` | 色调映射（Linear/ACES） |
+| `get_color_lut()` / `set_color_lut(resource_name)` | 色彩 LUT 配置 |
+| `get_scene_bounding_box()` | 场景包围盒（center/dimensions/radius） |
+
+---
+
+## Phase 15 — 效果节点
+
+**状态：** ✅ 完成
+
+**目标：** 通过 `layerstack.insert_*_effect` 在图层 Content / Mask 栈插入效果节点。
+
+### 实现的 MCP Tools（9 个）
+
+| Tool | 插入位置 | 说明 |
+|------|---------|------|
+| `add_filter_effect(layer_id, filter_name?)` | Content | Filter 效果，可指定资源 |
+| `add_generator_effect(layer_id, generator_name?)` | Content | Generator 效果 |
+| `add_levels_effect(layer_id)` | Content | Levels 色阶 |
+| `add_compare_mask_effect(layer_id)` | Mask | Compare Mask |
+| `add_color_selection_effect(layer_id)` | Mask | Color Selection |
+| `add_anchor_point_effect(layer_id, anchor_name?)` | Content | Anchor Point |
+| `get_effect_parameters(layer_id)` | — | 读取 Levels/CompareMask/ColorSelection/Filter/Generator 参数 |
+| `get_selected_nodes(texture_set_name?)` | — | 获取当前选中节点 |
+| `set_selected_nodes(node_ids)` | — | 设置选中节点 |
+
+### 新发现 API
+
+| API | 说明 |
+|-----|------|
+| `ls.insert_filter_effect / insert_generator_effect / insert_levels_effect` | 在 `NodeStack.Content` 插入 |
+| `ls.insert_compare_mask_effect / insert_color_selection_effect` | 在 `NodeStack.Mask` 插入 |
+| `ls.insert_anchor_point_effect(pos, name)` | 锚点需要名称参数 |
+| `ls.get_selected_nodes(stack)` / `ls.set_selected_nodes(nodes)` | 选区读写 |
+
+---
+
+## Phase 16 — 烘焙 API（Python 原生）
+
+**状态：** ✅ 完成
+
+**目标：** 用 `substance_painter.baking` 原生 API 替代 Phase 9 的 `sp_bake_mesh_maps`（JS 方案），
+提供完整的参数读写 + 状态控制 + 异步执行。
+
+### 实现的 MCP Tools（5 个）
+
+| Tool | 功能 |
+|------|------|
+| `get_baking_parameters(ts_name)` | 读取 common + 各 baker + 曲率方法 + 启用项 |
+| `set_baking_parameters(ts_name, common?, baker?)` | 设置烘焙参数 |
+| `bake_texture_set(ts_name)` | 异步启动烘焙 |
+| `get_baking_state(ts_name)` | 读取启用状态/曲率方法/bakers/UV tiles |
+| `set_baking_state(ts_name, ...)` | 设置启用状态/曲率方法/bakers/UV tiles |
+
+### 新发现 API
+
+| API | 说明 |
+|-----|------|
+| `baking.BakingParameters.from_texture_set_name(name)` | 入口 |
+| `bp.common()` / `bp.baker(MeshMapUsage)` | 参数字典（`{name: Property}`） |
+| `bp.get_curvature_method()` / `bp.get_enabled_bakers()` / `bp.get_enabled_uv_tiles()` | 状态读取 |
+| `textureset.MeshMapUsage` | baker 枚举（AO/Curvature/Normal/...） |
+
+> Phase 9 的 `sp_bake_mesh_maps`（JS `alg.baking.bake`）保留，作为快速一键烘焙的备选。
+
+---
+
+## Phase 17 — 项目生命周期 + 元数据 + 资源发现
+
+**状态：** ✅ 完成
+
+### 实现的 MCP Tools（8 个）
+
+| Tool | 功能 |
+|------|------|
+| `create_project(mesh_path, ...)` | 创建新项目（网格/法线格式/工作流/UV tile） |
+| `open_project(file_path)` | 打开 .spp |
+| `close_project()` | 关闭当前项目 |
+| `reload_mesh(mesh_path, ...)` | 异步重载网格 |
+| `get_project_metadata(context, key)` | 读取持久化元数据 |
+| `set_project_metadata(context, key, value)` | 写入持久化元数据 |
+| `list_project_metadata(context)` | 列出某 context 下所有键 |
+| `list_resources_by_usage(usage, search?)` | 按用途类型列资源（filter/generator/substance/...） |
+
+### 新发现 API
+
+| API | 说明 |
+|-----|------|
+| `project.create(mesh_file_path=..., settings=ProjectCreationSettings(...))` | 创建项目 |
+| `project.Metadata(context)` → `.set/get/list_keys` | 项目级持久化元数据 |
+| `project.reload_mesh(path, settings)` | 异步重载，配 `ProjectCreationSettings` |
+| `resource.Usage` 枚举 | 资源用途分类 |
+
+### 当前工具规模
+
+**MCP tools 总计 92 个**（与 `server/sp_mcp.py` 的 `@mcp.tool()` 数量、
+`handlers.py` 的 `_REGISTRY` 条目数一一对应）。新增工具时三处需同步：
+`sp_mcp.py`（tool 定义）+ `handlers.py`（handler + 注册表）+ 对应 `.opencode/skills`。
 
 ---
 

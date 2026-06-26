@@ -121,10 +121,10 @@ def sp_set_layer_property(layer_id: str, prop: str, value: object) -> dict:
     """
     修改图层属性。
     layer_id 从 sp_get_layer_stack 获取。
-    prop 可选值：opacity（float 0–1）/ enabled（bool）/ name（str）/ blend_mode（str）
+    prop 可选值：opacity（float 0–1）/ visible（bool）/ name（str）/ blend_mode（str）
     修改后建议调用 sp_capture_viewport 确认视觉效果。
     """
-    _VALID_PROPS = {"opacity", "enabled", "name", "blend_mode"}
+    _VALID_PROPS = {"opacity", "visible", "name", "blend_mode"}
     if prop not in _VALID_PROPS:
         raise ValueError(
             f"Invalid prop: {prop!r}. Valid options: {sorted(_VALID_PROPS)}"

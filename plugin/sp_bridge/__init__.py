@@ -15,13 +15,22 @@ _BRIDGE = None  # type: Optional[_bridge.BridgeServer]
 BRIDGE_PORT = 27182
 
 
+def _log_append(msg: str):
+    """追加写入日志，保留历史记录。"""
+    try:
+        with _LOG.open("a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+    except Exception:
+        pass
+
+
 def start_plugin():
     global _BRIDGE
     try:
         _BRIDGE = _bridge.BridgeServer(port=BRIDGE_PORT)
         _BRIDGE.start()
         msg = "SP Bridge started on port {}".format(BRIDGE_PORT)
-        _LOG.write_text(msg + "\n")
+        _log_append(msg)
         substance_painter.logging.log(
             substance_painter.logging.INFO,
             "sp_bridge",
@@ -29,7 +38,7 @@ def start_plugin():
         )
     except Exception:
         err = traceback.format_exc()
-        _LOG.write_text(err)
+        _log_append(err)
         substance_painter.logging.log(
             substance_painter.logging.ERROR,
             "sp_bridge",
@@ -50,4 +59,4 @@ def close_plugin():
             "SP Bridge stopped",
         )
     except Exception:
-        _LOG.write_text(traceback.format_exc())
+        _log_append(traceback.format_exc())

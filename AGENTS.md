@@ -59,20 +59,23 @@ Phase 2 探索发现以下与文档/预期不符的实际 API，所有代码必�
 ```
 sp-mcp/
 ├── plugin/
-│   ├── sp_bridge/               # 装入 Painter 的嵌入式插件
-│   │   ├── __init__.py             # 插件入口：start_plugin / close_plugin
-│   │   ├── bridge.py               # HTTP server（独立线程）+ QTimer 轮询队列调度
-│   │   └── handlers.py             # substance_painter.* API 的实际调用
-│   ├── server/
-│   ├── sp_mcp.py               # FastMCP server，暴露 MCP tools
-│   └── client.py               # 对 plugin HTTP bridge 的封装（requests）
+│   └── sp_bridge/              # 装入 Painter 的嵌入式插件
+│       ├── __init__.py             # 插件入口：start_plugin / close_plugin
+│       ├── bridge.py               # HTTP server（独立线程）+ QTimer 轮询队列调度
+│       └── handlers.py             # substance_painter.* API 的实际调用（_REGISTRY: 92 方法）
+├── server/                    # 外部 MCP 进程（venv 运行）
+│   ├── sp_mcp.py                   # FastMCP server，暴露 92 个 MCP tools
+│   ├── client.py                   # 对 plugin HTTP bridge 的封装（requests）
+│   └── pidlock.py                  # 单实例 PID 锁（防止重复启动 server）
 ├── tests/
-│   ├── conftest.py             # substance_painter mock 注入
-│   ├── test_handlers_mock.py   # mock 测试，不需要 Painter
-│   └── test_server_tools.py    # server tool 测试，含 integration
-├── AGENTS.md                   # 本文件，每次 session 必读
-├── PHASES.md                   # 开发阶段规划，任务来源
-├── mcp.json                    # MCP server 描述
+│   ├── conftest.py                 # substance_painter mock 注入
+│   ├── test_handlers_mock.py       # handler mock 测试，不需要 Painter
+│   ├── test_server_tools.py        # server tool 测试，含 integration
+│   └── test_pidlock.py             # PID 锁测试（依赖 wmic，沙箱内可能 skip/fail）
+├── .opencode/skills/          # 16 个项目专属 skill（LLM 操作参考）
+├── AGENTS.md                  # 本文件，每次 session 必读
+├── PHASES.md                  # 开发阶段规划，任务来源
+├── mcp.json / .mcp.json       # MCP server 描述
 └── pyproject.toml
 ```
 
@@ -167,6 +170,10 @@ prop 可选值：`opacity` / `visible` / `name` / `blend_mode`
 **`sp_list_shelf_materials(filter)`**
 列出可用 Smart Material，支持关键词过滤。
 
+**`sp_list_materials(filter)`** — 列出普通材质（SUBSTANCE 类型），支持关键词过滤。
+
+**`sp_apply_material(layer_id, material_name)`** — 将普通材质应用到图层的所有通道。
+
 **`sp_export_textures(preset, output_dir)`**
 触发贴图导出，返回导出文件路径列表。
 
@@ -232,6 +239,16 @@ prop 可选值：`opacity` / `visible` / `name` / `blend_mode`
 **`sp_set_environment(preset)`**
 切换 HDRI 环境光预设。
 
+**`sp_set_active_texture_set(name)`** — 切换当前操作的活动纹理集。
+
+**`sp_set_texture_set_resolution(width, height)`** — 调整活动纹理集分辨率。
+
+**`sp_get_project_info()`** — 读取项目信息（路径/纹理集/分辨率等）。
+
+**`sp_save_project()`** — 保存当前项目。
+
+**`sp_set_camera(position?, rotation?, fov?, target?)`** — 设置相机位置/旋转/FOV，或朝向目标点。
+
 ### Phase 8 — 批量 Undo
 
 **`sp_begin_batch(name)`**
@@ -256,10 +273,10 @@ sp_end_batch()
 通过 `sp.js.evaluate()` 调用 SP 的 `alg` JS API，补上 Python API 缺失的功能。
 
 **`sp_bake_mesh_maps(texture_set_name)`** — 烘焙 mesh maps（AO/Curvature/Normal 等）。
-需要 SP 10.0+。通过 `alg.baking.bake()` 实现。
+需要 SP 10.0+。通过 `alg.baking.bake()` 实现。需要完整参数控制时用 Phase 16 的原生烘焙 API。
 
 **`sp_add_texture_set_channel(texture_set_name, channel_id, channel_format, channel_label)`** — 给纹理集添加通道。
-通过 `alg.texturesets.addChannel()` 实现。
+`channel_format`: 传给 `alg.texturesets.addChannel()` 的格式字符串，默认 `"RGB16F"`，其它可选 `"sRGB8"` / `"L8"` / `"L16"` / `"RGBA16F"` 等。通过 `alg.texturesets.addChannel()` 实现。
 
 **`sp_remove_texture_set_channel(texture_set_name, channel_id)`** — 删除纹理集通道。
 通过 `alg.texturesets.removeChannel()` 实现。
@@ -334,6 +351,86 @@ sp_shortcut(action="undo")                 → Ctrl+Z 撤销
 sp_shortcut(action="frame_all")            → Alt+F 适配视图
 sp_cu_unlock()                             → 操作完毕，隐藏警示条
 ```
+
+---
+
+### 图层补充工具
+
+**`sp_find_layer_by_name(name)`** — 跨所有纹理集按名称搜索图层（大小写不敏感），返回 `matches` 列表。不知道 layer_id 时用它定位。
+
+**`sp_add_mask(layer_id)`** — 为图层加空白白色遮罩（非程序化）。`sp_remove_mask(layer_id)` 移除。Smart Mask 不走这里，用 `sp_delete_layer` 删整个 mask effect。
+
+**`sp_list_export_presets()`** — 列出可用导出预设名。调 `sp_export_textures` 前先确认 preset 合法值。
+
+**`sp_get_iray_params()`** — 读取当前 Iray 面板参数（改前确认现状）。
+
+### 程序化源参数控制（SourceSubstance）
+
+仅 `FillLayerNode` / `FillEffectNode` 且源为 `SourceSubstance` 时可用。
+
+**`sp_get_source_info(layer_id, channel?)`** — 读取源信息（类型/颜色/资源/参数）。
+
+**`sp_get_substance_parameters(layer_id, channel?)`** — 读取参数当前值 + 类型/描述。
+
+**`sp_set_substance_parameters(layer_id, params, channel?)`** — 批量改参数（dict）。
+
+**`sp_get_substance_presets(layer_id, channel?)`** / **`sp_apply_substance_preset(layer_id, preset_name, channel?)`** — 列出/应用预设。
+
+**`sp_get_source_outputs(layer_id, channel?)`** / **`sp_set_source_output(layer_id, output_id, channel?)`** — 输出映射读写。
+
+### 相机与显示增强
+
+**`sp_get_camera()`** — 读取主相机完整状态（position/rotation/fov）。
+
+**`sp_get_tone_mapping()`** / **`sp_set_tone_mapping(function)`** — 色调映射，function: `"Linear"` / `"ACES"`。
+
+**`sp_get_color_lut()`** / **`sp_set_color_lut(resource_name)`** — 色彩 LUT 配置读写。
+
+**`sp_get_scene_bounding_box()`** — 场景包围盒（center/dimensions/radius）。
+
+### Phase 15 — 效果节点
+
+通过 `layerstack.insert_*_effect` 在图层 Content / Mask 栈插入效果节点。
+
+**`sp_add_filter_effect(layer_id, filter_name?)`** — Filter 效果（Content 栈）。
+
+**`sp_add_generator_effect(layer_id, generator_name?)`** — Generator 效果（Content 栈）。
+
+**`sp_add_levels_effect(layer_id)`** — Levels 色阶（Content 栈）。
+
+**`sp_add_compare_mask_effect(layer_id)`** / **`sp_add_color_selection_effect(layer_id)`** — 遮罩效果（Mask 栈）。
+
+**`sp_add_anchor_point_effect(layer_id, anchor_name?)`** — 锚点（Content 栈）。
+
+**`sp_get_effect_parameters(layer_id)`** — 读取效果节点参数（Levels/CompareMask/ColorSelection/Filter/Generator）。
+
+**`sp_get_selected_nodes(texture_set_name?)`** / **`sp_set_selected_nodes(node_ids)`** — 选区读写。
+
+### Phase 16 — 烘焙 API（Python 原生）
+
+用 `substance_painter.baking` 原生 API，比 Phase 9 的 `sp_bake_mesh_maps`（JS）更完整。
+
+**`sp_get_baking_parameters(texture_set_name)`** — 读取 common + 各 baker + 曲率方法 + 启用项。
+
+**`sp_set_baking_parameters(texture_set_name, common?, baker?)`** — 设置烘焙参数。
+
+**`sp_bake_texture_set(texture_set_name)`** — 异步启动烘焙。
+
+**`sp_get_baking_state(texture_set_name)`** / **`sp_set_baking_state(texture_set_name, ...)`** — 启用状态/曲率方法/bakers/UV tiles 读写。
+
+### Phase 17 — 项目生命周期 + 元数据
+
+**`sp_create_project(mesh_path, ...)`** — 创建新项目（网格/法线格式/工作流）。
+
+**`sp_open_project(file_path)`** / **`sp_close_project()`** — 打开 .spp / 关闭项目。
+
+**`sp_reload_mesh(mesh_path, ...)`** — 异步重载网格。
+
+**`sp_get_project_metadata(context, key)`** / **`sp_set_project_metadata(context, key, value)`** / **`sp_list_project_metadata(context)`** — 项目级持久化元数据读写。
+
+**`sp_list_resources_by_usage(usage, search?)`** — 按用途列资源。usage: `filter`/`generator`/`substance`/`smart_material`/`smart_mask`/`texture`/`environment`/`export_preset`。
+
+> **工具规模：** MCP tools 总计 92 个，与 `sp_mcp.py` 的 `@mcp.tool()` 数和 `handlers.py` 的 `_REGISTRY` 条目一一对应。新增工具要三处同步：`sp_mcp.py` + `handlers.py` + `.opencode/skills`。
 
 ---
 

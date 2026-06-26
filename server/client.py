@@ -13,7 +13,10 @@ import requests
 _PORT = int(os.environ.get("SP_BRIDGE_PORT", 27182))
 _HOST = os.environ.get("SP_BRIDGE_HOST", "127.0.0.1")
 _BASE_URL = f"http://{_HOST}:{_PORT}"
-_TIMEOUT = float(os.environ.get("SP_BRIDGE_TIMEOUT", 60.0))
+# client timeout 必须比 bridge 的 TIMEOUT（60s）大一个余量，
+# 保证 bridge 先超时返回 504，client 收到明确的 ok=false
+# 而非网络层超时。否则 bridge 任务仍在队列里稍后执行，导致重复操作。
+_TIMEOUT = float(os.environ.get("SP_BRIDGE_TIMEOUT", 65.0))
 
 
 def call(method: str, params: dict | None = None, timeout: float | None = None) -> object:
@@ -50,7 +53,15 @@ def call(method: str, params: dict | None = None, timeout: float | None = None) 
             "(look for 'SP Bridge running on :27182' in the status bar)"
         )
 
-    data = resp.json()
+    # bridge 可能返回非 JSON body（连接被 RST、空 body、HTML 错误页等），
+    # 需要 try/except 包住 .json()，否则抛原始 JSONDecodeError 对 LLM 不可读。
+    try:
+        data = resp.json()
+    except Exception:
+        raise ConnectionError(
+            f"SP bridge returned non-JSON response (status {resp.status_code}) — "
+            "bridge may have crashed or port is occupied by another process"
+        )
 
     if not data.get("ok"):
         error_msg = data.get("error", "unknown error")

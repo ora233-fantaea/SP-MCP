@@ -17,6 +17,15 @@ Substance Painter 贴图导出完整流程。
 4. 检查返回的文件列表，确认数量/类型正确
 ```
 
+## sp_list_export_presets
+
+列出所有可用的导出预设名称。**调用 `sp_export_textures` 前先用它确认 `preset` 参数的合法值**，
+避免预设名拼错导致导出失败。
+
+```
+sp_list_export_presets()  → ["PBR Metallic Roughness", "Unreal Engine 4 (Packed)", ...]
+```
+
 ## sp_export_textures
 
 触发贴图导出，返回导出的文件路径列表。
@@ -36,7 +45,7 @@ Substance Painter 贴图导出完整流程。
 | `"Unreal Engine 4 (Packed)"` | 含 ORM 打包贴图 | UE4/UE5 |
 | `"Unity (Standard)"` | 含 MetallicSmoothness 打包贴图 | Unity |
 
-> ⚠️ Preset 名称取决于你在 SP 中的导出模板配置。如果预设名不确定，先用 `sp_run_python` 探索：
+> ⚠️ Preset 名称取决于你在 SP 中的导出模板配置。预设名不确定时优先用 `sp_list_export_presets()` 查询；它返回空时再退回 `sp_run_python` 探索：
 > ```python
 > import substance_painter.js as js
 > js.evaluate('alg.mapexport.presets()')  # 或类似 API

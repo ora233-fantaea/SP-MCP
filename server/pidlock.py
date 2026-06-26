@@ -50,17 +50,107 @@ def _process_exists(pid: int) -> bool:
 
 
 def _get_process_cmdline(pid: int) -> str:
-    """获取进程命令行（仅用于校验是本项目进程）。"""
+    """获取进程命令行（仅用于校验是本项目进程）。
+
+    不依赖已废弃的 wmic（在新版 Windows 11 上可能已移除，且在受限环境
+    返回空字符串）。优先用 ctypes 直接读目标进程 PEB 中的命令行；失败再
+    回退到 PowerShell 的 CIM 查询。两条路径都失败时返回空字符串，调用方
+    据此跳过 kill（安全第一）。
+    """
+    cmd = _cmdline_via_peb(pid)
+    if cmd:
+        return cmd
+    return _cmdline_via_powershell(pid)
+
+
+def _cmdline_via_peb(pid: int) -> str:
+    """通过 ntdll 读取目标进程 PEB 中的命令行（纯 ctypes，无外部进程）。
+
+    仅支持 64 位 Windows（本项目运行环境）。任何异常或读取失败都返回
+    空字符串，由上层回退。
+    """
     try:
+        kernel32 = ctypes.windll.kernel32
+        ntdll = ctypes.windll.ntdll
+
+        PROCESS_QUERY_INFORMATION = 0x0400
+        PROCESS_VM_READ = 0x0010
+        handle = kernel32.OpenProcess(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid
+        )
+        if not handle:
+            return ""
+        try:
+            class PROCESS_BASIC_INFORMATION(ctypes.Structure):
+                _fields_ = [
+                    ("Reserved1", ctypes.c_void_p),
+                    ("PebBaseAddress", ctypes.c_void_p),
+                    ("Reserved2", ctypes.c_void_p * 2),
+                    ("UniqueProcessId", ctypes.c_void_p),
+                    ("Reserved3", ctypes.c_void_p),
+                ]
+
+            pbi = PROCESS_BASIC_INFORMATION()
+            ret_len = ctypes.c_ulong(0)
+            status = ntdll.NtQueryInformationProcess(
+                handle, 0, ctypes.byref(pbi),
+                ctypes.sizeof(pbi), ctypes.byref(ret_len),
+            )
+            if status != 0 or not pbi.PebBaseAddress:
+                return ""
+
+            def _read(addr, size):
+                buf = ctypes.create_string_buffer(size)
+                nread = ctypes.c_size_t(0)
+                ok = kernel32.ReadProcessMemory(
+                    handle, ctypes.c_void_p(addr), buf,
+                    size, ctypes.byref(nread),
+                )
+                if not ok or nread.value != size:
+                    return None
+                return buf.raw
+
+            ptr_size = ctypes.sizeof(ctypes.c_void_p)
+            peb = ctypes.cast(pbi.PebBaseAddress, ctypes.c_void_p).value
+            # PEB 偏移 0x20（x64）指向 RTL_USER_PROCESS_PARAMETERS 指针
+            params_ptr_raw = _read(peb + 0x20, ptr_size)
+            if not params_ptr_raw:
+                return ""
+            params_ptr = int.from_bytes(params_ptr_raw, "little")
+            if not params_ptr:
+                return ""
+            # RTL_USER_PROCESS_PARAMETERS 偏移 0x70（x64）是 CommandLine
+            # UNICODE_STRING：USHORT Length, USHORT MaximumLength, padding, PWSTR Buffer
+            us_raw = _read(params_ptr + 0x70, 8 + ptr_size)
+            if not us_raw:
+                return ""
+            length = int.from_bytes(us_raw[0:2], "little")
+            buf_ptr = int.from_bytes(us_raw[8:8 + ptr_size], "little")
+            if not buf_ptr or length == 0:
+                return ""
+            data = _read(buf_ptr, length)
+            if not data:
+                return ""
+            return data.decode("utf-16-le", errors="replace")
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return ""
+
+
+def _cmdline_via_powershell(pid: int) -> str:
+    """回退方案：用 PowerShell 的 CIM 查询命令行（不依赖 wmic）。"""
+    try:
+        ps_cmd = (
+            "(Get-CimInstance Win32_Process -Filter "
+            f"\"ProcessId={int(pid)}\").CommandLine"
+        )
         result = subprocess.run(
-            [
-                "wmic", "process", "where", f"ProcessId={pid}",
-                "get", "CommandLine", "/format:csv"
-            ],
-            capture_output=True, text=True, timeout=3,
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=5,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
-        return result.stdout
+        return result.stdout or ""
     except Exception:
         return ""
 

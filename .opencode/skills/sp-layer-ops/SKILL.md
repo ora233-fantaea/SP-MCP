@@ -7,7 +7,7 @@ description: 调用 MCP tools 操作 Substance Painter 图层栈，包括新建�
 
 # SP Layer Operations
 
-操作 Substance Painter 图层栈的 MCP tools 参考（38 tools）。
+操作 Substance Painter 图层栈的 MCP tools 参考（92 tools 全覆盖）。
 
 ## ⚠️ 核心原则：先读后改
 
@@ -76,7 +76,16 @@ description: 调用 MCP tools 操作 Substance Painter 图层栈，包括新建�
 
 **`sp_add_paint_layer(name)`** — 新建绘画图层（PaintLayerNode）。
 
-**`sp_set_layer_property(layer_id, prop, value)`** — 修改图层属性。prop: opacity / enabled / name / blend_mode。
+**`sp_find_layer_by_name(name)`** — 在所有纹理集中按名称搜索图层（大小写不敏感）。
+不知道 layer_id 时用它定位，返回 `matches` 列表（每项含 id/name/type/texture_set/depth）。
+
+**`sp_add_mask(layer_id)`** — 为图层添加一个空白白色遮罩（非程序化）。
+添加后可用 `sp_set_layer_channel` 调遮罩；要程序化磨损/脏迹用 `sp_add_smart_mask`。
+
+**`sp_remove_mask(layer_id)`** — 移除图层的普通遮罩。
+注意：Smart Mask 不走这里，需用 `sp_delete_layer` 删掉整个 mask effect。
+
+**`sp_set_layer_property(layer_id, prop, value)`** — 修改图层属性。prop: opacity / visible(bool) / name / blend_mode。
 
 **`sp_set_layer_channel(layer_id, channel, value)`** — 为指定通道设定数值。
 - channel: `"Roughness"` / `"Metallic"` / `"Height"` / `"BaseColor"` / `"Normal"`
@@ -164,6 +173,77 @@ sp_end_batch()
 ### Escape hatch
 
 **`sp_run_python(code)`** — 在主线程执行任意 Python。仅作备用。
+
+### 效果节点（Phase 15）
+
+> 详情见 [sp-effect-nodes](../sp-effect-nodes/SKILL.md)。
+
+| Tool | 说明 |
+|------|------|
+| `sp_add_filter_effect(layer_id, filter_name?)` | 添加 Filter 效果 |
+| `sp_add_generator_effect(layer_id, generator_name?)` | 添加 Generator 效果 |
+| `sp_add_levels_effect(layer_id)` | 添加 Levels 色阶效果 |
+| `sp_add_compare_mask_effect(layer_id)` | 添加 Compare Mask 遮罩效果 |
+| `sp_add_color_selection_effect(layer_id)` | 添加 Color Selection 遮罩效果 |
+| `sp_add_anchor_point_effect(layer_id, anchor_name?)` | 添加 Anchor Point 锚点 |
+| `sp_get_effect_parameters(layer_id)` | 读取效果节点参数 |
+| `sp_get_selected_nodes(texture_set_name?)` | 获取当前选中节点 |
+| `sp_set_selected_nodes(node_ids)` | 设置选中节点 |
+
+### 程序化源控制（Phase 13）
+
+> 详情见 [sp-substance-source](../sp-substance-source/SKILL.md)。
+
+| Tool | 说明 |
+|------|------|
+| `sp_get_source_info(layer_id, channel?)` | 读取填充图层/效果的源信息 |
+| `sp_get_substance_parameters(layer_id, channel?)` | 读取程序化源参数值 |
+| `sp_set_substance_parameters(layer_id, params, channel?)` | 修改程序化源参数值 |
+| `sp_get_substance_presets(layer_id, channel?)` | 列出程序化源预设 |
+| `sp_apply_substance_preset(layer_id, preset_name, channel?)` | 应用预设 |
+| `sp_get_source_outputs(layer_id, channel?)` | 获取输出映射 |
+| `sp_set_source_output(layer_id, output_id, channel?)` | 切换活动输出 |
+
+### 相机与显示（Phase 13–14）
+
+| Tool | 说明 |
+|------|------|
+| `sp_get_camera()` | 读取主相机完整状态 |
+| `sp_get_tone_mapping()` | 获取色调映射函数（Linear/ACES） |
+| `sp_set_tone_mapping(function)` | 设置色调映射函数 |
+| `sp_get_color_lut()` | 获取色彩 LUT 配置 |
+| `sp_set_color_lut(resource_name)` | 设置色彩 LUT |
+| `sp_get_scene_bounding_box()` | 获取场景包围盒 |
+
+### 烘焙 API（Phase 16）
+
+> 详情见 [sp-baking](../sp-baking/SKILL.md)。
+
+| Tool | 说明 |
+|------|------|
+| `sp_get_baking_parameters(ts_name)` | 读取完整烘焙参数 |
+| `sp_set_baking_parameters(ts_name, common?, baker?)` | 设置烘焙参数 |
+| `sp_bake_texture_set(ts_name)` | 异步启动烘焙 |
+| `sp_get_baking_state(ts_name)` | 获取烘焙启用状态 |
+| `sp_set_baking_state(ts_name, ...)` | 设置烘焙状态/曲率方法/bakers/UV tiles |
+
+### 项目生命周期（Phase 17）
+
+| Tool | 说明 |
+|------|------|
+| `sp_create_project(mesh_path, ...)` | 创建新项目（网格/法线格式/工作流） |
+| `sp_open_project(file_path)` | 打开已有 .spp 项目 |
+| `sp_close_project()` | 关闭当前项目 |
+| `sp_reload_mesh(mesh_path, ...)` | 异步重载网格 |
+| `sp_get_project_metadata(context, key)` | 读取持久化元数据 |
+| `sp_set_project_metadata(context, key, value)` | 写入持久化元数据 |
+| `sp_list_project_metadata(context)` | 列出某 context 下所有键 |
+
+### 资源发现（Phase 17b）
+
+**`sp_list_resources_by_usage(usage, search?)`** — 按用途类型列出资源。
+- `usage`：`"filter"` / `"generator"` / `"substance"` / `"smart_material"` / `"smart_mask"` / `"texture"` / `"environment"` / `"export_preset"`
+- `search`：可选关键词过滤
 
 ---
 

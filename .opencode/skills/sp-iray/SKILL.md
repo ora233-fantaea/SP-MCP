@@ -46,6 +46,9 @@ Iray 是 Substance Painter 内置的 GPU 光线追踪渲染器，能产生照片
 
 渲染实际的停止条件是 **max_samples 和 max_time 中先到达的那个**。
 
+**`sp_get_iray_params()`** — 读取当前 Iray 面板的参数设置（修改前先确认现状）。
+返回 `params` 字典，键为各 spinbox 的 objectName，值为当前数值。
+
 ### 参数配方
 
 | 用途 | max_samples | max_time | 分辨率 | 预估耗时 |
