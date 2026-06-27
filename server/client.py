@@ -29,7 +29,10 @@ def call(method: str, params: dict | None = None, timeout: float | None = None) 
     参数：
       method   RPC 方法名
       params   方法参数字典
-      timeout  自定义超时秒数（None 用默认 _TIMEOUT）
+      timeout  自定义超时秒数（None 用默认 _TIMEOUT）。用于 export/bake 等
+               长操作：client 的 HTTP 读超时会比 bridge 端等待多留一个余量，
+               并把期望的 bridge 等待时长随请求传过去，保证 bridge 先超时返回
+               504，而非网络层超时（后者会让 bridge 任务仍在队列里稍后执行）。
 
     异常类型：
       ConnectionError  bridge 不可达（Painter 未启动或插件未加载）
@@ -37,7 +40,14 @@ def call(method: str, params: dict | None = None, timeout: float | None = None) 
       RuntimeError     bridge 返回 ok=false（SP API 执行失败）
     """
     payload = {"method": method, "params": params or {}}
-    effective_timeout = timeout if timeout is not None else _TIMEOUT
+    if timeout is not None:
+        # 告知 bridge 期望的等待时长，使其放宽 UI 线程等待（夹取到 bridge 上限）。
+        payload["timeout"] = timeout
+
+    # bridge 端等待时长 = timeout（若指定），HTTP 读超时再多留 5s 余量，
+    # 确保 bridge 先返回 504 而非客户端网络层先超时。
+    bridge_wait = timeout if timeout is not None else _TIMEOUT
+    effective_timeout = bridge_wait + 5.0
 
     try:
         resp = requests.post(_BASE_URL, json=payload, timeout=effective_timeout)

@@ -152,7 +152,7 @@ sp_end_batch()
 
 ### 视觉反馈
 
-**`sp_capture_viewport(mode="quick")`** — 截取 viewport。mode: `"quick"` (迭代) / `"render"` (Iray)。
+**`sp_capture_viewport(mode="quick")`** — 截取 viewport。mode: `"quick"` (迭代) / `"render"` (截当前画面，不自动触发 Iray；需先 start/poll Iray)。
 
 **`sp_set_camera(x,y,z, target_x,target_y,target_z, fov)`** — 设置相机位置和视角。
 

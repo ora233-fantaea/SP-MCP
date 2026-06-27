@@ -43,13 +43,14 @@ description: 控制 Substance Painter 相机位置/旋转/FOV、HDRI 环境光�
 
 ### set_camera 参数规则
 
-所有参数默认 `0.0`，表示"保持当前值不变"。只有非零值会修改对应属性。
+所有参数默认不传（None），表示"保持当前值不变"。只有显式传入的参数才会修改对应属性。
+朝向需 `target_x/y/z` 三者同时提供才更新；支持对准世界原点 `(0, 0, 0)`。
 
 | 参数 | 说明 |
 |---|---|
-| `x, y, z` | 相机世界坐标位置 |
-| `target_x, target_y, target_z` | 相机朝向目标点（会自动计算欧拉角旋转） |
-| `fov` | 视场角（度），默认 45 |
+| `x, y, z` | 相机世界坐标位置（不传则保持当前位置） |
+| `target_x, target_y, target_z` | 相机朝向目标点（三者齐全才计算欧拉角旋转，支持原点） |
+| `fov` | 视场角（度），不传则保持当前值 |
 
 ### 旋转相机（原地转头）
 
@@ -174,7 +175,7 @@ sp_set_color_lut("Film Look")
 - `start_iray_render` 是异步的，不阻塞 HTTP
 - `check_iray_render` 返回 `iterations`（如 `"120/100"`）和 `time`
 - 当 iterations 不再变化时，渲染已完成
-- `capture_viewport("render")` 截取的是 Iray 渲染结果，不是实时 viewport
+- `capture_viewport("render")` 截取当前 viewport，**不会自行触发 Iray**。要拿到 Iray 渲染图，须先 `start_iray_render` 再轮询 `check_iray_render`，渲染稳定后再 `capture_viewport("render")`；否则抓到的是普通 OpenGL 预览。
 
 ---
 

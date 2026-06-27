@@ -100,7 +100,7 @@ SP-MCP 提供两套烘焙 API：
 ### 增删通道（JS API）
 
 **`sp_add_texture_set_channel(texture_set_name, channel_id, channel_format, channel_label)`**
-- `channel_format`: `"Color4"` (RGBA) 或 `"Grayscale"` (灰度)
+- `channel_format`: alg API 合法值 — `"sRGB8"`(默认,彩色) / `"L8"`(灰度) / `"RGB8"` / `"RGB16"` / `"RGB16F"` / `"RGB32F"`
 - 需要 SP 10.0+
 
 **`sp_remove_texture_set_channel(texture_set_name, channel_id)`**

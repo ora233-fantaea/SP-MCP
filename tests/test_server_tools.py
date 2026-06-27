@@ -494,7 +494,7 @@ class TestPhase9Tools:
         from server.sp_mcp import sp_add_texture_set_channel
         result = sp_add_texture_set_channel(
             texture_set_name="Default", channel_id="custom_ch",
-            channel_format="Color4", channel_label="Custom"
+            channel_format="sRGB8", channel_label="Custom"
         )
         assert result["ok"] is True
 

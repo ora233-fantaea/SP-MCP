@@ -90,6 +90,9 @@ def _make_sp_mock():
             self._children = []
             self._stack = None
             self._has_mask = False
+            self._mask_background = None
+            self._content_effects = []   # content 栈中的 effect（用于克隆告警测试）
+            self._mask_effects = []      # mask 栈中的 effect
             self._material_source = None
             self._source_mode = None
 
@@ -156,6 +159,19 @@ def _make_sp_mock():
 
         def add_mask(self, background):
             self._has_mask = True
+            self._mask_background = background
+
+        def has_mask(self):
+            return self._has_mask
+
+        def get_mask_background(self):
+            return self._mask_background
+
+        def content_effects(self):
+            return list(self._content_effects)
+
+        def mask_effects(self):
+            return list(self._mask_effects)
 
         def get_parent(self):
             return self._parent
@@ -189,6 +205,8 @@ def _make_sp_mock():
             "get_blending_mode": get_blending_mode, "set_blending_mode": set_blending_mode,
             "get_stack": get_stack, "set_source": set_source, "get_source": get_source,
             "add_child": add_child, "sub_layers": sub_layers, "add_mask": add_mask,
+            "has_mask": has_mask, "get_mask_background": get_mask_background,
+            "content_effects": content_effects, "mask_effects": mask_effects,
             "get_parent": get_parent, "get_next_sibling": get_next_sibling,
             "get_previous_sibling": get_previous_sibling,
             "source_mode": property(lambda self: self._source_mode),
@@ -733,6 +751,12 @@ def _make_sp_mock():
         SMART_MATERIAL = "smartmaterial"
         SMART_MASK = "smartmask"
         SUBSTANCE = "substance"
+        FILTER = "filter"
+        GENERATOR = "generator"
+        TEXTURE = "texture"
+        ENVIRONMENT = "environment"
+        EXPORT_PRESET = "export_preset"
+        COLOR_LUT = "color_lut"
     resource.Type = ResourceType
 
     class MockResourceID:
@@ -934,6 +958,11 @@ def _make_sp_mock():
             self._data = data; self._w = w; self._h = h
         def width(self): return self._w
         def height(self): return self._h
+        def copy(self, x=None, y=None, w=None, h=None):
+            # 无参 copy() → 整图副本；带参 → 裁剪区域副本
+            if w is None or h is None:
+                return _MockQImage(self._data, self._w, self._h, self.Format_ARGB32)
+            return _MockQImage(self._data, w, h, self.Format_ARGB32)
 
     class _MockQPixmap:
         def __init__(self):
@@ -943,12 +972,16 @@ def _make_sp_mock():
             pm = _MockQPixmap()
             pm._data = img._data; pm._w = img._w; pm._h = img._h
             return pm
-        def save(self, path, fmt):
-            import struct
-            with open(path, 'wb') as f:
-                # Minimal valid PNG
-                f.write(b"\x89PNG\r\n\x1a\n")
-                f.write(b"\x00" * 64)
+        def width(self): return self._w
+        def height(self): return self._h
+        def save(self, target, fmt):
+            png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+            # target 可以是文件路径(str)或 QBuffer(有 write 方法)
+            if hasattr(target, "write"):
+                target.write(png)
+            else:
+                with open(target, 'wb') as f:
+                    f.write(png)
 
     pyside2_gui.QImage = _MockQImage
     pyside2_gui.QPixmap = _MockQPixmap
@@ -1348,16 +1381,19 @@ def _make_sp_mock():
     textureset.Channel = MockChannel
 
     # ── substance_painter.resource extensions (Usage enum) ──
+    # 真实 API 里 Type 与 Usage 是两个不同的枚举，二者的成员永不相等
+    # （res.type() 返回 Type，绝不会等于某个 Usage 值）。mock 必须保持这一
+    # 区分，否则会掩盖「用 Usage 去比较 res.type()」这类 bug（见 #2 回归）。
     class Usage:
-        FILTER = "filter"
-        GENERATOR = "generator"
-        SUBSTANCE = "substance"
-        SMART_MATERIAL = "smartmaterial"
-        SMART_MASK = "smartmask"
-        TEXTURE = "texture"
-        ENVIRONMENT = "environment"
-        EXPORT_PRESET = "export_preset"
-        COLOR_LUT = "color_lut"
+        FILTER = "usage:filter"
+        GENERATOR = "usage:generator"
+        SUBSTANCE = "usage:substance"
+        SMART_MATERIAL = "usage:smartmaterial"
+        SMART_MASK = "usage:smartmask"
+        TEXTURE = "usage:texture"
+        ENVIRONMENT = "usage:environment"
+        EXPORT_PRESET = "usage:export_preset"
+        COLOR_LUT = "usage:color_lut"
     resource.Usage = Usage
 
     # ── substance_painter.layerstack extensions (effect nodes, selection) ──

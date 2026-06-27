@@ -109,9 +109,86 @@ def _copy_channels(src_node, dst_node):
             pass
 
 
-def _clone_node(src_node, insert_pos):
-    """在 insert_pos 处创建 src_node 的完整克隆，返回新节点。"""
+def _node_has_mask(node) -> bool:
+    """尽力探测节点是否带遮罩（兼容不同 SP 版本与测试 mock）。
+
+    优先用 SP 10.x LayerNode 的 has_mask()；取不到再回退内部标志。
+    """
+    for attr in ("has_mask", "is_masked"):
+        fn = getattr(node, attr, None)
+        if callable(fn):
+            try:
+                return bool(fn())
+            except Exception:
+                pass
+    # mock / 旧版回退：内部状态标志
+    return bool(getattr(node, "_has_mask", False))
+
+
+def _node_effect_count(node, stack_kind: str) -> int:
+    """尽力统计节点 content / mask 栈中的 effect 数量。
+
+    stack_kind: "content" 或 "mask"。无法探测时返回 0（不阻塞操作，只用于告警）。
+
+    ⚠ API 名依据 SP 10.x LayerNode（content_effects() / mask_effects()）。
+    若在真实 SP 上这些 accessor 不存在或改名，此处会静默返回 0、克隆告警失效。
+    测试 mock 自身实现了这些方法，因此无法捕获名称偏差 —— 上线前需在真实
+    Painter 上验证 move/duplicate 带 effect 的图层确实会回传 warnings。
+    """
+    candidates = {
+        "content": ("content_effects", "get_content_effects"),
+        "mask": ("mask_effects", "get_mask_effects"),
+    }.get(stack_kind, ())
+    for attr in candidates:
+        fn = getattr(node, attr, None)
+        if callable(fn):
+            try:
+                return len(list(fn()))
+            except Exception:
+                pass
+    return 0
+
+
+def _copy_mask(src_node, dst_node, warnings: list) -> None:
+    """尽力复制遮罩：复制遮罩背景色；遮罩内的 effect 无法克隆时告警。"""
     import substance_painter.layerstack as ls
+
+    if not _node_has_mask(src_node):
+        return
+    # 复制遮罩背景（白/黑）。取不到时默认白色（SP 默认）。
+    background = ls.MaskBackground.White
+    getter = getattr(src_node, "get_mask_background", None)
+    if callable(getter):
+        try:
+            background = getter()
+        except Exception:
+            pass
+    try:
+        dst_node.add_mask(background)
+    except Exception:
+        warnings.append(
+            f"layer {src_node.get_name()!r}: mask could not be copied"
+        )
+        return
+    mask_effects = _node_effect_count(src_node, "mask")
+    if mask_effects:
+        warnings.append(
+            f"layer {src_node.get_name()!r}: {mask_effects} mask effect(s) "
+            "(e.g. smart mask / generator) were NOT copied — re-apply manually"
+        )
+
+
+def _clone_node(src_node, insert_pos, warnings: list = None):
+    """在 insert_pos 处创建 src_node 的克隆，返回新节点。
+
+    复制范围：名称、可见性、5 个 PBR 通道（opacity/blend/source）、遮罩背景。
+    无法复制的内容（content/mask effect 节点、paint 笔触）会被追加到 warnings
+    列表，由调用方回传给用户 —— 绝不静默丢失。
+    """
+    import substance_painter.layerstack as ls
+
+    if warnings is None:
+        warnings = []
 
     node_type = type(src_node).__name__
 
@@ -127,18 +204,30 @@ def _clone_node(src_node, insert_pos):
             child_pos = ls.InsertPosition.inside_node(
                 new_node, ls.NodeStack.Substack
             )
-            _clone_node(child, child_pos)
+            _clone_node(child, child_pos, warnings)
     elif node_type == "PaintLayerNode":
         new_node = ls.insert_paint(insert_pos)
         new_node.set_name(src_node.get_name())
         new_node.set_visible(src_node.is_visible())
         _copy_channels(src_node, new_node)
-        _log_warning("PaintLayerNode clone copies channels only, not paint strokes")
+        warnings.append(
+            f"layer {src_node.get_name()!r}: paint strokes were NOT copied "
+            "(channels only) — re-paint manually"
+        )
     else:  # FillLayerNode (also handles other fill-like types)
         new_node = ls.insert_fill(insert_pos)
         new_node.set_name(src_node.get_name())
         new_node.set_visible(src_node.is_visible())
         _copy_channels(src_node, new_node)
+
+    # 遮罩与 content effect（对所有层类型统一处理）
+    _copy_mask(src_node, new_node, warnings)
+    content_effects = _node_effect_count(src_node, "content")
+    if content_effects:
+        warnings.append(
+            f"layer {src_node.get_name()!r}: {content_effects} content effect(s) "
+            "(filter/generator/levels/...) were NOT copied — re-apply manually"
+        )
 
     return new_node
 
@@ -578,11 +667,15 @@ def duplicate_layer(layer_id: str) -> dict:
         # 复用 _clone_node：它会递归复制 GroupLayerNode 的子层并拷贝通道，
         # 避免此前 group 副本为空的问题。新副本插在原图层上方。
         pos = ls.InsertPosition.above_node(node)
-        new_node = _clone_node(node, pos)
+        warnings: list = []
+        new_node = _clone_node(node, pos, warnings)
 
         new_id = str(new_node.uid())
 
-        return {"id": new_id, "name": new_node.get_name()}
+        result = {"id": new_id, "name": new_node.get_name()}
+        if warnings:
+            result["warnings"] = warnings
+        return result
 
 
 def move_layer(layer_id: str, target_id: str, position: str = "above") -> dict:
@@ -600,10 +693,14 @@ def move_layer(layer_id: str, target_id: str, position: str = "above") -> dict:
         else:
             insert_pos = ls.InsertPosition.below_node(target)
 
-        new_node = _clone_node(src, insert_pos)
+        warnings: list = []
+        new_node = _clone_node(src, insert_pos, warnings)
         ls.delete_node(src)
 
-    return {"id": str(new_node.uid()), "name": new_node.get_name(), "ok": True}
+    result = {"id": str(new_node.uid()), "name": new_node.get_name(), "ok": True}
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def group_layers(layer_ids: list) -> dict:
@@ -632,12 +729,16 @@ def group_layers(layer_ids: list) -> dict:
         group = ls.insert_group(ls.InsertPosition.above_node(first))
         group.set_name("Group")
 
+        warnings: list = []
         for node in sorted_nodes:
             child_pos = ls.InsertPosition.inside_node(group, ls.NodeStack.Substack)
-            _clone_node(node, child_pos)
+            _clone_node(node, child_pos, warnings)
             ls.delete_node(node)
 
-    return {"id": str(group.uid()), "name": group.get_name(), "ok": True}
+    result = {"id": str(group.uid()), "name": group.get_name(), "ok": True}
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def ungroup_layer(layer_id: str) -> dict:
@@ -649,14 +750,18 @@ def ungroup_layer(layer_id: str) -> dict:
             raise ValueError(f"Layer is not a group: {layer_id!r}")
 
         children = list(group.sub_layers())
+        warnings: list = []
         for child in children:
             insert_pos = ls.InsertPosition.above_node(group)
-            _clone_node(child, insert_pos)
+            _clone_node(child, insert_pos, warnings)
             ls.delete_node(child)
 
         ls.delete_node(group)
 
-    return {"ok": True}
+    result = {"ok": True}
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def set_active_texture_set(name: str) -> dict:
@@ -698,9 +803,9 @@ def save_project() -> dict:
 
 
 def set_camera(
-    x: float = 0.0, y: float = 0.0, z: float = 0.0,
-    target_x: float = 0.0, target_y: float = 0.0, target_z: float = 0.0,
-    fov: float = 0.0,
+    x: float = None, y: float = None, z: float = None,
+    target_x: float = None, target_y: float = None, target_z: float = None,
+    fov: float = None,
 ) -> dict:
     import math
     import substance_painter.display as display
@@ -709,20 +814,20 @@ def set_camera(
 
     # 读取当前状态
     px, py, pz = cam.position
-    rx, ry, rz = cam.rotation
-    current_fov = cam.field_of_view
 
-    # 位置：非零值才覆盖
+    # 位置：仅在显式提供（非 None）时覆盖；缺省保持当前值。
     new_x = x if x is not None else px
     new_y = y if y is not None else py
     new_z = z if z is not None else pz
     cam.position = [new_x, new_y, new_z]
 
-    # FOV：非零值才覆盖
-    cam.field_of_view = fov if fov is not None else current_fov
+    # FOV：仅在显式提供时覆盖。
+    if fov is not None:
+        cam.field_of_view = fov
 
-    # 目标点：有值时计算旋转朝向目标
-    if target_x != 0.0 or target_y != 0.0 or target_z != 0.0:
+    # 目标点：需三个分量都提供才更新朝向；支持对准世界原点 (0,0,0)。
+    rx, ry, rz = cam.rotation
+    if target_x is not None and target_y is not None and target_z is not None:
         dx = target_x - new_x
         dy = target_y - new_y
         dz = target_z - new_z
@@ -834,7 +939,7 @@ def bake_mesh_maps(texture_set_name: str) -> dict:
 
 
 def add_texture_set_channel(texture_set_name: str, channel_id: str,
-                             channel_format: str = "RGB16F",
+                             channel_format: str = "sRGB8",
                              channel_label: str = "") -> dict:
     """通过 JS API 给纹理集添加通道。"""
     if not texture_set_name:
@@ -910,30 +1015,48 @@ def window_grab(region: dict = None) -> dict:
     # PW_RENDERFULLCONTENT = 2: capture OpenGL rendered content
     user32.PrintWindow(hwnd, hdc_mem, 2)
 
-    if region and all(k in region for k in ("x", "y", "width", "height")):
-        rx, ry, rw, rh = region["x"], region["y"], region["width"], region["height"]
-    else:
-        rx, ry, rw, rh = 0, 0, full_w, full_h
-
-    # Extract region bits
-    bmi = struct.pack("IiiHHIIiiII", 40, rw, -rh, 1, 32, 0, rw * rh * 4, 0, 0, 0, 0)
-    pixel_buf = ct.create_string_buffer(rw * rh * 4)
-    gdi32.GetDIBits(hdc_mem, hbmp, ry, rh, pixel_buf, bmi, 0)
-
-    from PySide2.QtGui import QImage, QPixmap
-    img = QImage(bytes(pixel_buf), rw, rh, QImage.Format_ARGB32)
-    pixmap = QPixmap.fromImage(img)
+    # 始终抓取完整窗口位图（top-down，biHeight 取负），再用 Qt 在像素空间裁剪。
+    # 此前的实现把 region 的 width/height 直接喂给 GetDIBits，导致 x 偏移被忽略、
+    # 且当宽度≠窗口宽时扫描行按错误步长解析、像素错位。
+    bmi = struct.pack("IiiHHIIiiII", 40, full_w, -full_h, 1, 32, 0,
+                      full_w * full_h * 4, 0, 0, 0, 0)
+    pixel_buf = ct.create_string_buffer(full_w * full_h * 4)
+    gdi32.GetDIBits(hdc_mem, hbmp, 0, full_h, pixel_buf, bmi, 0)
 
     gdi32.DeleteObject(hbmp)
     gdi32.DeleteDC(hdc_mem)
     user32.ReleaseDC(hwnd, hdc_window)
 
-    tmp = __import__("tempfile").mktemp(suffix=".png")
-    pixmap.save(tmp, "PNG")
-    with open(tmp, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode()
-    __import__("os").unlink(tmp)
-    return {"image": b64, "width": rw, "height": rh}
+    from PySide2.QtGui import QImage, QPixmap
+    from PySide2.QtCore import QBuffer, QIODevice
+    # 注意：QImage 不拷贝传入的缓冲，只持有指针。必须保留 raw 的 Python 引用，
+    # 否则临时 bytes 被回收后 QImage 指向已释放内存（use-after-free）。
+    raw = bytes(pixel_buf)
+    img = QImage(raw, full_w, full_h, QImage.Format_ARGB32)
+
+    if region and all(k in region for k in ("x", "y", "width", "height")):
+        rx, ry = int(region["x"]), int(region["y"])
+        rw, rh = int(region["width"]), int(region["height"])
+        # 夹取到窗口范围内，避免越界裁剪产生未初始化像素。
+        # rx/ry 夹到 [0, full-1]，保证 rw/rh 至少为 1 且不越界。
+        rx = max(0, min(rx, full_w - 1))
+        ry = max(0, min(ry, full_h - 1))
+        rw = max(1, min(rw, full_w - rx))
+        rh = max(1, min(rh, full_h - ry))
+        img = img.copy(rx, ry, rw, rh)
+    else:
+        # 让 QImage 拥有自己的数据副本，与 raw 解耦后再返回。
+        img = img.copy()
+
+    pixmap = QPixmap.fromImage(img)
+    del raw  # 此时 img 已独立持有像素，可安全释放原缓冲
+
+    # 内存编码为 PNG，避免 tempfile.mktemp（已弃用、不安全）落盘。
+    qbuf = QBuffer()
+    qbuf.open(QIODevice.WriteOnly)
+    pixmap.save(qbuf, "PNG")
+    b64 = base64.b64encode(bytes(qbuf.data())).decode()
+    return {"image": b64, "width": pixmap.width(), "height": pixmap.height()}
 
 
 def _get_mouse_pos():
@@ -1608,18 +1731,26 @@ def _capture_qt() -> dict:
 
 
 def _capture_iray() -> dict:
-    """Iray 模式截图。
+    """抓取当前 viewport 状态（render 模式）。
 
-    用户工作流：
-    1. sp_set_iray_params(max_samples=50, max_time=30)  设置低质量
-    2. 手动在 Painter 按 F10 或 Mode > Rendering 触发 Iray
-    3. 等待渲染完成
-    4. sp_capture_viewport(mode="render") 截取当前 viewport
+    重要：本函数不会自行触发 Iray 渲染。Iray 是异步的、需要 SP 事件循环
+    运行，而本 handler 在 UI 线程同步执行，无法在单次调用内启动并等待 Iray。
+    要得到真正的 Iray 渲染图，请按以下工作流：
+      1. sp_set_iray_params(max_samples=50, max_time=30)
+      2. sp_start_iray_render()
+      3. 轮询 sp_check_iray_render() 直到 iterations 稳定
+      4. sp_capture_viewport(mode="render")  ← 此时抓到的才是 Iray 结果
 
-    本函数使用 Qt grab 截取当前 viewport 状态。
+    返回的 image 是当前 viewport 内容：若 Iray 正在渲染则为 Iray 输出，
+    否则为普通 OpenGL 预览。
     """
     result = _capture_qt()
     result["mode"] = "render"
+    result["note"] = (
+        "Captured current viewport. This does NOT trigger Iray itself — "
+        "start Iray via sp_start_iray_render() and poll sp_check_iray_render() "
+        "first, otherwise this is a normal OpenGL preview."
+    )
     return result
 
 
@@ -2663,29 +2794,31 @@ def list_resources_by_usage(usage: str, search: str = "") -> dict:
     """
     import substance_painter.resource as r
 
-    usage_map = {
-        "filter": r.Usage.FILTER,
-        "generator": r.Usage.GENERATOR,
-        "substance": r.Usage.SUBSTANCE,
-        "smart_material": r.Usage.SMART_MATERIAL,
-        "smart_mask": r.Usage.SMART_MASK,
-        "texture": r.Usage.TEXTURE,
-        "environment": r.Usage.ENVIRONMENT,
-        "export_preset": r.Usage.EXPORT_PRESET,
+    # res.type() 返回 resource.Type 枚举，因此映射必须用 r.Type 而非 r.Usage
+    # （二者是不同枚举，混用会导致比较恒为 False、结果恒空）。
+    type_map = {
+        "filter": r.Type.FILTER,
+        "generator": r.Type.GENERATOR,
+        "substance": r.Type.SUBSTANCE,
+        "smart_material": r.Type.SMART_MATERIAL,
+        "smart_mask": r.Type.SMART_MASK,
+        "texture": r.Type.TEXTURE,
+        "environment": r.Type.ENVIRONMENT,
+        "export_preset": r.Type.EXPORT_PRESET,
     }
 
     usage_lower = usage.lower()
-    if usage_lower not in usage_map:
+    if usage_lower not in type_map:
         raise ValueError(
-            f"Unknown usage: {usage!r}. Valid: {sorted(usage_map.keys())}"
+            f"Unknown usage: {usage!r}. Valid: {sorted(type_map.keys())}"
         )
 
-    target_usage = usage_map[usage_lower]
+    target_type = type_map[usage_lower]
     all_resources = r.search(search) if search else r.search("")
     result = []
     for res in all_resources:
         try:
-            if res.type() == target_usage:
+            if res.type() == target_type:
                 result.append(res.gui_name())
         except Exception:
             pass

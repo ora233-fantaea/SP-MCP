@@ -115,8 +115,30 @@ class BridgeServer(object):
 
 class _RpcHandler(BaseHTTPRequestHandler):
 
-    # bridge 端超时。client 端应比此值大约 5-10s，确保 bridge 先返回 504。
+    # bridge 端默认超时。client 端应比此值大约 5-10s，确保 bridge 先返回 504。
     TIMEOUT = 60.0
+    # 单个请求可放宽到的硬上限（秒）。export/bake 等长操作通过请求里的
+    # "timeout" 字段申请更长等待，但不得超过此上限，防止 UI 线程被无限占用。
+    MAX_TIMEOUT = 600.0
+
+    @classmethod
+    def _resolve_wait_timeout(cls, req_timeout) -> float:
+        """把请求里的 timeout 字段解析/夹取为合法的 UI 等待时长（秒）。
+
+        - None → 默认 TIMEOUT
+        - 非数值 / NaN / Infinity → 回退默认 TIMEOUT
+        - 其余 → 夹取到 [TIMEOUT, MAX_TIMEOUT]
+        """
+        import math as _math
+        if req_timeout is None:
+            return cls.TIMEOUT
+        try:
+            rt = float(req_timeout)
+        except (TypeError, ValueError):
+            return cls.TIMEOUT
+        if not _math.isfinite(rt):
+            return cls.TIMEOUT
+        return min(max(rt, cls.TIMEOUT), cls.MAX_TIMEOUT)
 
     def do_POST(self):
         try:
@@ -142,6 +164,17 @@ class _RpcHandler(BaseHTTPRequestHandler):
             self._respond(400, {"ok": False, "error": "JSON parse error: {}".format(exc)})
             return
 
+        # body 必须是 JSON object（dict）。裸标量/数组无法 dispatch，直接 400，
+        # 避免后续 body.get(...) 抛 AttributeError 变成 500+traceback。
+        if not isinstance(body, dict):
+            self._respond(400, {"ok": False,
+                                "error": "Request body must be a JSON object"})
+            return
+
+        # 按请求覆盖等待超时：长操作（export/bake）可申请更长等待，
+        # 夹取到 [TIMEOUT, MAX_TIMEOUT]，避免提前 504 误报失败导致重复执行。
+        wait_timeout = self._resolve_wait_timeout(body.get("timeout"))
+
         holder = {"result": None, "error": None}
         done = threading.Event()
 
@@ -164,13 +197,19 @@ class _RpcHandler(BaseHTTPRequestHandler):
 
         _task_queue.put(_ui_task)
 
-        timed_out = not done.wait(timeout=self.TIMEOUT)
+        timed_out = not done.wait(timeout=wait_timeout)
 
         if timed_out:
             # 标记取消，防止任务稍后执行产生副作用。
+            # 注意：已在 UI 线程开始执行的同步 SP 调用无法真正中断，
+            # 此标记只能阻止「尚未开始」的任务。client 端据 504 不应自动重试
+            # 长操作（可能已在执行中），应改用查询类工具确认实际状态。
             cancelled[0] = True
-            _log("timeout waiting for ui_task\n")
-            self._respond(504, {"ok": False, "error": "UI thread timeout"})
+            _log("timeout waiting for ui_task (waited %.0fs)\n" % wait_timeout)
+            self._respond(504, {"ok": False, "error":
+                                "UI thread timeout after %.0fs — operation may "
+                                "still be running; do NOT blindly retry, verify "
+                                "state first" % wait_timeout})
         elif holder["error"] is not None:
             self._respond(500, {"ok": False, "error": holder["error"]})
         else:

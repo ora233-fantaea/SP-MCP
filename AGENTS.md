@@ -148,7 +148,7 @@ HTTP handler 用 `threading.Event` 阻塞等待结果（timeout 10s）。
 **这是视觉创作迭代的核心工具**——每次批量修改后必须调用。
 ```
 mode="quick"   Qt grab，毫秒级，迭代用
-mode="render"  Iray，秒级，最终确认用
+mode="render"  截当前 viewport（不自动触发 Iray；需先 start_iray_render + 轮询 check_iray_render）
 返回: {"image": "<base64 PNG>", "width": int, "height": int}
 ```
 

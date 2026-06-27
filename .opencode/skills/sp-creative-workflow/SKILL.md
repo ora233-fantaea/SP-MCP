@@ -26,7 +26,7 @@ description: 通过截图回路驱动 Substance Painter 材质创作，包括视
 5. 执行材质操作（add_fill_layer / apply_smart_material / apply_material / add_effect / set_substance_parameters）
 6. sp_capture_viewport(mode="quick") 评估结果
 7. [评估] 满意 → 进入步骤 8，不满意 → 回步骤 5
-8. sp_capture_viewport(mode="render") Iray 最终确认（可选）
+8. [可选] sp_start_iray_render() → 轮询 sp_check_iray_render() → sp_capture_viewport(mode="render") 做 Iray 最终确认
 ```
 
 ## 截图模式选择

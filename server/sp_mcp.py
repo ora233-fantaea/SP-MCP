@@ -121,10 +121,10 @@ def sp_set_layer_property(layer_id: str, prop: str, value: object) -> dict:
     """
     修改图层属性。
     layer_id 从 sp_get_layer_stack 获取。
-    prop 可选值：opacity（float 0–1）/ visible（bool）/ name（str）/ blend_mode（str）
+    prop 可选值：opacity（float 0–1）/ visible（bool，enabled 为其别名）/ name（str）/ blend_mode（str）
     修改后建议调用 sp_capture_viewport 确认视觉效果。
     """
-    _VALID_PROPS = {"opacity", "visible", "name", "blend_mode"}
+    _VALID_PROPS = {"opacity", "visible", "enabled", "name", "blend_mode"}
     if prop not in _VALID_PROPS:
         raise ValueError(
             f"Invalid prop: {prop!r}. Valid options: {sorted(_VALID_PROPS)}"
@@ -295,7 +295,10 @@ def sp_capture_viewport(mode: str = "quick") -> dict:
     这是视觉创作迭代的核心工具，每次批量修改后必须调用。
 
     mode="quick"   Qt grab，毫秒级，用于迭代确认
-    mode="render"  Iray 离线渲染，秒级，用于最终确认（导出前）
+    mode="render"  截取当前 viewport 状态（含正在进行的 Iray 输出）。
+                   ⚠ 注意：本工具不会自行触发 Iray。要得到真正的 Iray 渲染图，
+                   先 sp_start_iray_render() 再轮询 sp_check_iray_render()，
+                   渲染稳定后再用 mode="render" 截图；否则抓到的是普通预览。
 
     返回：{"image": "<base64 PNG>", "width": int, "height": int}
     将 image 字段作为图像内容传给视觉模型分析。
@@ -331,10 +334,11 @@ def sp_export_textures(preset: str, output_dir: str) -> dict:
     if not output_dir:
         raise ValueError("output_dir must not be empty")
 
+    # 导出可能耗时数十秒到数分钟，放宽 bridge 等待，避免误报超时后被重复触发。
     return sp.call("export_textures", {
         "preset":     preset,
         "output_dir": output_dir,
-    })
+    }, timeout=300.0)
 
 
 # ── Escape hatch ──────────────────────────────────────────────────────────────
@@ -536,22 +540,25 @@ def sp_save_project() -> dict:
 
 @mcp.tool()
 def sp_set_camera(
-    x: float, y: float, z: float,
-    target_x: float, target_y: float, target_z: float,
-    fov: float,
+    x: float = None, y: float = None, z: float = None,
+    target_x: float = None, target_y: float = None, target_z: float = None,
+    fov: float = None,
 ) -> dict:
     """
-    设置相机位置和视角。
+    设置相机位置和视角。未提供的参数保持当前值不变。
 
-    x/y/z           相机位置
-    target_x/y/z    目标点位置（相机朝向）
-    fov             视场角（度），默认 45
+    x/y/z           相机位置（不传则保持当前位置）
+    target_x/y/z    目标点位置（相机朝向）。需三者同时提供才会更新朝向；
+                    支持对准世界原点 (0, 0, 0)。
+    fov             视场角（度），不传则保持当前值
     """
-    return sp.call("set_camera", {
-        "x": x, "y": y, "z": z,
-        "target_x": target_x, "target_y": target_y, "target_z": target_z,
-        "fov": fov,
-    })
+    params = {}
+    for k, v in (("x", x), ("y", y), ("z", z),
+                 ("target_x", target_x), ("target_y", target_y),
+                 ("target_z", target_z), ("fov", fov)):
+        if v is not None:
+            params[k] = v
+    return sp.call("set_camera", params)
 
 
 @mcp.tool()
@@ -617,15 +624,17 @@ def sp_bake_mesh_maps(texture_set_name: str) -> dict:
 
 @mcp.tool()
 def sp_add_texture_set_channel(texture_set_name: str, channel_id: str,
-                                channel_format: str = "Color4",
+                                channel_format: str = "sRGB8",
                                 channel_label: str = "") -> dict:
     """
     给纹理集添加通道。
     通过 `js.evaluate("alg.texturesets.addChannel()")` 实现。
 
     texture_set_name: 纹理集名称
-    channel_id: 通道标识符（如 "custom_channel_0"）
-    channel_format: 通道格式（"Color4" / "Grayscale"，默认 "Color4"）
+    channel_id: 通道标识符（如 "user0"…"user7"，或内置通道名）
+    channel_format: 通道格式，须为 alg API 合法值：
+                    彩色 "sRGB8" / "L8"(灰度) / "RGB8" / "RGB16" / "RGB16F" / "RGB32F"
+                    （默认 "sRGB8"）
     channel_label: 通道显示名称（默认同 channel_id）
     """
     if not texture_set_name:
@@ -1038,7 +1047,7 @@ def sp_set_color_lut(resource_name: str) -> dict:
     按名称设置色彩 LUT 配置文件。
 
     resource_name  资源名称（模糊匹配），如 "sepia"、"Greyscale"、"Invert" 等。
-                   用 sp_list_all_resources 可查看可用的 colorluts。
+                   用 sp_list_resources_by_usage(usage="texture") 可查看可用资源。
 
     设为空字符串 "" 则清除色彩 LUT。
     """
@@ -1309,7 +1318,8 @@ def sp_create_project(
         kwargs["mesh_map_file_paths"] = mesh_map_file_paths
     if mesh_unit_scale is not None:
         kwargs["mesh_unit_scale"] = mesh_unit_scale
-    return sp.call("create_project", kwargs)
+    # 创建项目需加载并处理网格，可能耗时较久，放宽 bridge 等待。
+    return sp.call("create_project", kwargs, timeout=300.0)
 
 
 @mcp.tool()
@@ -1322,7 +1332,8 @@ def sp_open_project(file_path: str) -> dict:
     """
     if not file_path:
         raise ValueError("file_path must not be empty")
-    return sp.call("open_project", {"file_path": file_path})
+    # 打开项目需加载贴图/计算，可能耗时较久，放宽 bridge 等待。
+    return sp.call("open_project", {"file_path": file_path}, timeout=300.0)
 
 
 @mcp.tool()

@@ -204,7 +204,7 @@ mcp_servers:
 
 | Tool | 说明 |
 |------|------|
-| `sp_capture_viewport` | 截取 viewport（`"quick"` 迭代 / `"render"` Iray） |
+| `sp_capture_viewport` | 截取 viewport（`"quick"` 迭代 / `"render"` 截当前画面，不自动触发 Iray） |
 | `sp_set_camera` | 设置相机位置和视角 |
 | `sp_frame_mesh` | 自动适配视图到模型 |
 | `sp_set_environment` | 切换 HDRI 环境光 |
