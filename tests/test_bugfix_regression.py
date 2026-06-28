@@ -912,3 +912,49 @@ class TestSetBakingStateNoChange:
         assert out["ok"] is True
         assert any("textureset_enabled" in c for c in out["changed"])
 
+
+class TestSetEnvironmentUsageFiltered:
+    """set_environment 只在 Usage.ENVIRONMENT 资源里匹配，避免误选同名的
+    非环境资源；未命中时把可用环境贴图列进报错。"""
+
+    def test_picks_environment_resource(self, fresh_layer_stack):
+        out = handlers.set_environment("Sunrise")
+        assert out["ok"] is True
+        assert out["environment"] == "Sunrise"
+
+    def test_unknown_lists_available(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="Available environments"):
+            handlers.set_environment("NoSuchHDRI_xyz")
+
+    def test_does_not_select_non_environment_same_name(self, fresh_layer_stack, monkeypatch):
+        # 构造一个和环境贴图同名、但用途是 smart_material 的资源排在前面，
+        # 旧实现（不校验用途）会误选它；新实现只认 ENVIRONMENT。
+        import substance_painter.resource as r
+        import substance_painter.display as display
+
+        class _Fake:
+            def __init__(self, name, usages, ident):
+                self._n = name
+                self._u = usages
+                self._id = ident
+            def gui_name(self): return self._n
+            def usages(self): return list(self._u)
+            def identifier(self): return self._id
+
+        real_search = r.search
+
+        def fake_search(q):
+            base = list(real_search(q))
+            # 同名 brush 排最前面（诱饵，id 独特），真正的环境资源在后
+            return [_Fake("Studio", ["brush"], "id://decoy-brush")] + base
+
+        # 捕获实际传给 set_environment_resource 的 identifier
+        captured = {}
+        monkeypatch.setattr(display, "set_environment_resource",
+                            lambda rid: captured.__setitem__("rid", rid))
+        monkeypatch.setattr(r, "search", fake_search)
+
+        handlers.set_environment("Studio")
+        # 绝不能选中 brush 诱饵的 id —— 必须是某个环境用途资源
+        assert captured["rid"] != "id://decoy-brush"
+

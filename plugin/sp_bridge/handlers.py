@@ -927,15 +927,50 @@ def frame_mesh() -> dict:
 
 
 def set_environment(preset: str) -> dict:
+    """更换视口背景的环境贴图（HDRI）。
+
+    preset: 环境贴图名（如 "Studio 02"、"Bus Garage"）。可先用
+    list_resources_by_usage("environment") 查看实机可用的全部环境贴图。
+
+    实机（SP 10.0.1）已验证：display.set_environment_resource 存在；环境贴图
+    用 Usage.ENVIRONMENT 标识。此前仅按名字模糊匹配 r.search 的首个命中，未校验
+    用途，可能误把同名的 brush/material 当环境贴图传入。这里只在 ENVIRONMENT
+    资源里匹配（精确名优先于子串），并在未命中时把可用列表带进报错。
+    """
     import substance_painter.display as display
     import substance_painter.resource as r
-    # 查找匹配的环境资源
-    resources = r.search(preset)
-    for res in resources:
-        if preset.lower() in res.gui_name().lower():
-            display.set_environment_resource(res.identifier())
-            return {"ok": True, "environment": res.gui_name()}
-    raise ValueError(f"Environment preset not found: {preset!r}")
+
+    # 仅收集环境用途的资源，避免误选同名的非环境资源。
+    envs = []
+    for res in r.search(preset) or []:
+        try:
+            if r.Usage.ENVIRONMENT in res.usages():
+                envs.append(res)
+        except Exception:
+            continue
+    # search(preset) 在某些版本按内容前缀过滤可能漏掉，回退到全量再筛。
+    if not envs:
+        for res in r.search("") or []:
+            try:
+                if r.Usage.ENVIRONMENT in res.usages():
+                    envs.append(res)
+            except Exception:
+                continue
+
+    pl = preset.lower()
+    # 精确名优先，其次子串包含。
+    exact = next((res for res in envs if res.gui_name().lower() == pl), None)
+    chosen = exact or next((res for res in envs if pl in res.gui_name().lower()), None)
+
+    if chosen is None:
+        available = sorted(res.gui_name() for res in envs)
+        raise ValueError(
+            f"Environment preset not found: {preset!r}. "
+            f"Available environments ({len(available)}): {available}"
+        )
+
+    display.set_environment_resource(chosen.identifier())
+    return {"ok": True, "environment": chosen.gui_name()}
 
 
 # ── Phase 8: 批量 Undo ──────────────────────────────────────────────────────
