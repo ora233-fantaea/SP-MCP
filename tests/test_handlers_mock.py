@@ -272,9 +272,16 @@ class TestListMaterials:
         assert isinstance(result, list)
 
     def test_returns_substance_only(self, fresh_layer_stack):
+        """list_materials 只返回 Type.SUBSTANCE 的资源（含 filter/generator/
+        substance 引擎资源——真实 SP 上它们都是 SUBSTANCE 类，用 usages 区分用途）。
+        断言：返回的都是 mock 里标记为 substance 类型的资源。"""
         result = handlers.list_materials(filter="")
+        import substance_painter.resource as r
+        substance_names = {res.gui_name() for res in r.search("")
+                           if res.type() == r.Type.SUBSTANCE}
+        assert result, "should return at least one substance material"
         for name in result:
-            assert "Carbon" in name or "Concrete" in name or "Fabric" in name or "Leather" in name or "Metal" in name or "Plastic" in name or "Wood" in name
+            assert name in substance_names
 
     def test_filter(self, fresh_layer_stack):
         result = handlers.list_materials(filter="Carbon")

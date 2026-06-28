@@ -23,6 +23,12 @@ from . import handlers
 _LOG = pathlib.Path.home() / "sp_bridge.log"
 _task_queue = queue.Queue()   # type: queue.Queue
 
+# 关闭协调：_enqueue_lock 串行化「入队」与「stop() drain」两段临界区，
+# _shutting_down 一旦置位，新请求不再入队（改为立即拒绝），从根本上杜绝
+# 「drain 之后才 put 的孤儿任务永远无人消费、HTTP 线程死等到超时」竞态。
+_enqueue_lock = threading.Lock()
+_shutting_down = False
+
 # 单次 QTimer tick 内最多执行的任务数，防止积压时阻塞 SP UI 过久。
 _MAX_TASKS_PER_TICK = 8
 # 请求 body 最大长度（字节），防止恶意大 body。
@@ -47,14 +53,28 @@ class BridgeServer(object):
 
     def start(self):
         # QTimer 必须在主线程创建，start() 由 __init__.py 在主线程调用
+        global _shutting_down
+        with _enqueue_lock:
+            _shutting_down = False   # 支持 stop() 后再次 start()（reload 场景）
         self._timer = QTimer()
         self._timer.timeout.connect(self._process_queue)
         self._timer.start(50)  # 每 50ms 消费一次队列
 
         # ThreadingHTTPServer: 每个请求独立线程，避免长操作阻塞 accept。
-        # allow_reuse_address=True: 插件 reload 时避免 EADDRINUSE。
-        ThreadingHTTPServer.allow_reuse_address = True
-        self._server = ThreadingHTTPServer(("127.0.0.1", self.port), _RpcHandler)
+        # allow_reuse_address 必须在 bind 之前设置，且只作用于本实例（不污染
+        # ThreadingHTTPServer 类的全局状态，以免影响 SP 进程内其它 HTTP server）。
+        # 因此用 bind_and_activate=False 构造，设好实例属性后再手动 bind/activate。
+        self._server = ThreadingHTTPServer(
+            ("127.0.0.1", self.port), _RpcHandler, bind_and_activate=False
+        )
+        self._server.allow_reuse_address = True  # reload 时避免 EADDRINUSE
+        try:
+            self._server.server_bind()
+            self._server.server_activate()
+        except Exception:
+            self._server.server_close()
+            self._server = None
+            raise
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             daemon=True,
@@ -64,23 +84,33 @@ class BridgeServer(object):
 
     def stop(self):
         # 先停 timer，再 drain 队列通知 in-flight 请求，最后关 server。
+        global _shutting_down
         if self._timer is not None:
             self._timer.stop()
             self._timer = None
 
-        # 通知所有还在队列里的任务：已取消，让 HTTP 端立刻收到错误。
-        cancelled = []
-        while True:
-            try:
-                pending = _task_queue.get_nowait()
-                cancelled.append(pending)
-            except queue.Empty:
-                break
+        # 置关闭标志（持锁），使「检查标志后入队」的请求线程要么在置标志前已
+        # 入队（会被下面 drain 到并取消），要么在置标志后被拒绝（不再入队）。
+        # 二者都不会留下无人消费的孤儿任务。
+        with _enqueue_lock:
+            _shutting_down = True
+            cancelled = []
+            while True:
+                try:
+                    pending = _task_queue.get_nowait()
+                    cancelled.append(pending)
+                except queue.Empty:
+                    break
         for task in cancelled:
             # 标记取消，避免任务稍后执行；同时 set done 让阻塞的 HTTP 线程立即返回。
             cancel_fn = getattr(task, "_cancel", None)
             if cancel_fn:
                 cancel_fn()
+            # 在 holder 写入错误，避免 HTTP 端把「未执行的已取消任务」当成
+            # ok=true / result=null 的成功响应回给 client。
+            holder = getattr(task, "_holder", None)
+            if holder is not None and holder.get("error") is None:
+                holder["error"] = "bridge shutting down — operation cancelled, not executed"
             done = getattr(task, "_done", None)
             if done is not None and not done.is_set():
                 done.set()
@@ -195,7 +225,14 @@ class _RpcHandler(BaseHTTPRequestHandler):
         _ui_task._holder = holder
         _ui_task._cancel = lambda: cancelled.__setitem__(0, True)
 
-        _task_queue.put(_ui_task)
+        # 持锁检查关闭标志后入队，与 stop() 的 drain 互斥：若 bridge 正在/已经
+        # 关闭，直接拒绝而非留下无人消费的任务（否则会死等到超时）。
+        with _enqueue_lock:
+            if _shutting_down:
+                self._respond(503, {"ok": False,
+                                    "error": "bridge is shutting down"})
+                return
+            _task_queue.put(_ui_task)
 
         timed_out = not done.wait(timeout=wait_timeout)
 

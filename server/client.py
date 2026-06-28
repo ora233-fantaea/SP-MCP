@@ -18,6 +18,14 @@ _BASE_URL = f"http://{_HOST}:{_PORT}"
 # 而非网络层超时。否则 bridge 任务仍在队列里稍后执行，导致重复操作。
 _TIMEOUT = float(os.environ.get("SP_BRIDGE_TIMEOUT", 65.0))
 
+# 与 bridge._RpcHandler 的 TIMEOUT / MAX_TIMEOUT 保持一致。bridge 会把请求里的
+# timeout 夹取到 [_BRIDGE_MIN_WAIT, _BRIDGE_MAX_WAIT]，client 必须按相同规则
+# 推算 bridge 的真实等待时长，再加余量，否则当 timeout < _BRIDGE_MIN_WAIT 时
+# client 会先于 bridge 网络层超时，导致「报错但任务仍在执行」的重复风险。
+_BRIDGE_MIN_WAIT = 60.0
+_BRIDGE_MAX_WAIT = 600.0
+_TIMEOUT_MARGIN = 5.0
+
 
 def call(method: str, params: dict | None = None, timeout: float | None = None) -> object:
     """
@@ -44,10 +52,17 @@ def call(method: str, params: dict | None = None, timeout: float | None = None) 
         # 告知 bridge 期望的等待时长，使其放宽 UI 线程等待（夹取到 bridge 上限）。
         payload["timeout"] = timeout
 
-    # bridge 端等待时长 = timeout（若指定），HTTP 读超时再多留 5s 余量，
-    # 确保 bridge 先返回 504 而非客户端网络层先超时。
-    bridge_wait = timeout if timeout is not None else _TIMEOUT
-    effective_timeout = bridge_wait + 5.0
+    # 推算 bridge 真实等待时长：未指定 timeout 时 bridge 用其默认 60s；指定时
+    # bridge 会夹取到 [_BRIDGE_MIN_WAIT, _BRIDGE_MAX_WAIT]。HTTP 读超时取「bridge
+    # 真实等待 + 余量」，确保 bridge 先返回 504，而非客户端网络层先超时（后者会
+    # 让任务仍在 bridge 队列里稍后执行，造成重复操作）。
+    if timeout is None:
+        # 默认路径：bridge 用其默认 60s 等待，client 读超时用可配置的 _TIMEOUT
+        # （默认 65s，可经 SP_BRIDGE_TIMEOUT 覆盖），保证 ≥ bridge 等待 + 余量。
+        effective_timeout = max(_TIMEOUT, _BRIDGE_MIN_WAIT + _TIMEOUT_MARGIN)
+    else:
+        bridge_wait = min(max(float(timeout), _BRIDGE_MIN_WAIT), _BRIDGE_MAX_WAIT)
+        effective_timeout = bridge_wait + _TIMEOUT_MARGIN
 
     try:
         resp = requests.post(_BASE_URL, json=payload, timeout=effective_timeout)

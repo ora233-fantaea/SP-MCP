@@ -63,7 +63,7 @@ def _make_sp_mock():
         Emissive   = _Enum("Emissive")
         Specular   = _Enum("Specular")
         Opacity    = _Enum("Opacity")
-        AmbientOcclusion = _Enum("AmbientOcclusion")
+        AO         = _Enum("AO")   # 真实 SP 用 AO，不是 AmbientOcclusion
         Scattering = _Enum("Scattering")
         Translucency = _Enum("Translucency")
 
@@ -586,6 +586,10 @@ def _make_sp_mock():
         MockTextureSet(1, "Default"),
         MockTextureSet(2, "MetalParts"),
     ]
+    # 真实 SP 里活动 stack 必属于某个纹理集。让 "Default" 纹理集的 stack 就是
+    # 全局活动 stack（_mock_stack），使 get_active_stack() 能 identity-match 到它，
+    # 否则 set_texture_set_resolution 等按活动 stack 查找的 handler 永远匹配不到。
+    _mock_texture_sets[0]._stack = _mock_stack
 
     textureset.get_active_stack = lambda: _mock_stack
     textureset.set_active_stack = lambda stack: None
@@ -743,20 +747,30 @@ def _make_sp_mock():
                     "/tmp/export/Metallic.png", "/tmp/export/Normal.png"]
     export.ExportConfig = ExportConfig
     export.export_project_textures = lambda config: ExportResult()
+    # 真实 SP 10.0.1: 导出预设经 export 模块列出（不在 resource.search 里）。
+    class _PredefPreset:
+        def __init__(self, name): self.name = name
+    class _ResPreset:
+        def __init__(self, name): self.resource_id = MockResourceID(name)
+    export.list_predefined_export_presets = lambda: [
+        _PredefPreset("PBR Metallic Roughness"), _PredefPreset("2D View")]
+    export.list_resource_export_presets = lambda: [
+        _ResPreset("Unity HD Render Pipeline"), _ResPreset("Unreal Engine 4")]
 
     # ── substance_painter.resource ──
     resource = types.ModuleType("substance_painter.resource")
 
+    # 真实 SP 10.0.1: Type 只有这些粗类（不含 FILTER/GENERATOR/TEXTURE/ENVIRONMENT）。
     class ResourceType:
         SMART_MATERIAL = "smartmaterial"
         SMART_MASK = "smartmask"
         SUBSTANCE = "substance"
-        FILTER = "filter"
-        GENERATOR = "generator"
-        TEXTURE = "texture"
-        ENVIRONMENT = "environment"
-        EXPORT_PRESET = "export_preset"
-        COLOR_LUT = "color_lut"
+        FONT = "font"
+        IMAGE = "image"
+        PRESET = "preset"
+        SHADER = "shader"
+        SCRIPT = "script"
+        BRUSH = "brush"
     resource.Type = ResourceType
 
     class MockResourceID:
@@ -768,9 +782,12 @@ def _make_sp_mock():
             return f"resource://{self.context}/{self.name}"
 
     class MockResource:
-        def __init__(self, name, res_type="smartmaterial"):
+        # res_type 是粗类（Type）；usages 是用途列表（Usage），与真实 API 一致：
+        # 用途概念（filter/generator/texture/environment）在 usages() 里。
+        def __init__(self, name, res_type="smartmaterial", usages=None):
             self._name = name
             self._type = res_type
+            self._usages = usages if usages is not None else [res_type]
             self._id = MockResourceID(name)
         def gui_name(self):
             return self._name
@@ -778,6 +795,8 @@ def _make_sp_mock():
             return self._id
         def type(self):
             return self._type
+        def usages(self):
+            return list(self._usages)
 
     def resource_search(query):
         all_resources = [
@@ -799,18 +818,25 @@ def _make_sp_mock():
             MockResource("Surface Worn", "smartmask"),
             MockResource("Paint Damaged", "smartmask"),
             MockResource("Moisture", "smartmask"),
-            # Regular Materials (SUBSTANCE type, representative subset)
-            MockResource("Carbon Fiber", "substance"),
-            MockResource("Concrete Raw", "substance"),
-            MockResource("Fabric Felt", "substance"),
-            MockResource("Leather Grain", "substance"),
-            MockResource("Metal Rust", "substance"),
-            MockResource("Plastic Glossy", "substance"),
-            MockResource("Wood Bark", "substance"),
-            # Environments
-            MockResource("Studio", "environment"),
-            MockResource("Sunrise", "environment"),
-            MockResource("Night", "environment"),
+            # Regular Materials (SUBSTANCE type, usage=PROCEDURAL)
+            MockResource("Carbon Fiber", "substance", ["procedural"]),
+            MockResource("Concrete Raw", "substance", ["procedural"]),
+            MockResource("Fabric Felt", "substance", ["procedural"]),
+            MockResource("Leather Grain", "substance", ["procedural"]),
+            MockResource("Metal Rust", "substance", ["procedural"]),
+            MockResource("Plastic Glossy", "substance", ["procedural"]),
+            MockResource("Wood Bark", "substance", ["procedural"]),
+            # Filters / Generators / Textures (Type=SUBSTANCE/IMAGE, usage 区分用途)
+            MockResource("Blur", "substance", ["filter"]),
+            MockResource("Sharpen", "substance", ["filter"]),
+            MockResource("Metal Edge Wear", "substance", ["generator"]),
+            MockResource("Dirt Generator", "substance", ["generator"]),
+            MockResource("Grunge Map 001", "image", ["texture"]),
+            MockResource("Noise Fractal", "image", ["texture"]),
+            # Environments (Type=IMAGE, usage=ENVIRONMENT)
+            MockResource("Studio", "image", ["environment"]),
+            MockResource("Sunrise", "image", ["environment"]),
+            MockResource("Night", "image", ["environment"]),
         ]
         if not query:
             return all_resources
@@ -818,6 +844,24 @@ def _make_sp_mock():
 
     resource.search = resource_search
     resource.ResourceID = MockResourceID
+
+    # 真实 SP 10.0.1 的 Usage 枚举成员（用途概念在此，而非 Type）。
+    class ResourceUsage:
+        ALPHA = "alpha"
+        BASE_MATERIAL = "base_material"
+        BRUSH = "brush"
+        COLOR_LUT = "color_lut"
+        ENVIRONMENT = "environment"
+        EXPORT = "export"
+        FILTER = "filter"
+        FONT = "font"
+        GENERATOR = "generator"
+        PROCEDURAL = "procedural"
+        SHADER = "shader"
+        SMART_MASK = "smartmask"
+        SMART_MATERIAL = "smartmaterial"
+        TEXTURE = "texture"
+    resource.Usage = ResourceUsage
 
     # ── Mock ctypes.windll.user32 (for Computer Use) ──
     import ctypes as _real_ctypes
@@ -1379,22 +1423,6 @@ def _make_sp_mock():
             return self._is_color
 
     textureset.Channel = MockChannel
-
-    # ── substance_painter.resource extensions (Usage enum) ──
-    # 真实 API 里 Type 与 Usage 是两个不同的枚举，二者的成员永不相等
-    # （res.type() 返回 Type，绝不会等于某个 Usage 值）。mock 必须保持这一
-    # 区分，否则会掩盖「用 Usage 去比较 res.type()」这类 bug（见 #2 回归）。
-    class Usage:
-        FILTER = "usage:filter"
-        GENERATOR = "usage:generator"
-        SUBSTANCE = "usage:substance"
-        SMART_MATERIAL = "usage:smartmaterial"
-        SMART_MASK = "usage:smartmask"
-        TEXTURE = "usage:texture"
-        ENVIRONMENT = "usage:environment"
-        EXPORT_PRESET = "usage:export_preset"
-        COLOR_LUT = "usage:color_lut"
-    resource.Usage = Usage
 
     # ── substance_painter.layerstack extensions (effect nodes, selection) ──
     class NodeStack:

@@ -125,15 +125,18 @@ def _node_has_mask(node) -> bool:
     return bool(getattr(node, "_has_mask", False))
 
 
-def _node_effect_count(node, stack_kind: str) -> int:
-    """尽力统计节点 content / mask 栈中的 effect 数量。
+def _node_effect_count(node, stack_kind: str):
+    """统计节点 content / mask 栈中的 effect 数量。
 
-    stack_kind: "content" 或 "mask"。无法探测时返回 0（不阻塞操作，只用于告警）。
+    返回：
+      int  —— 成功探测到的 effect 数量（0 表示确实没有）
+      None —— 无法探测（accessor 不存在/抛错），调用方应据此给出
+              「无法确认是否有 effect」的保守告警，避免静默丢失。
 
-    ⚠ API 名依据 SP 10.x LayerNode（content_effects() / mask_effects()）。
-    若在真实 SP 上这些 accessor 不存在或改名，此处会静默返回 0、克隆告警失效。
-    测试 mock 自身实现了这些方法，因此无法捕获名称偏差 —— 上线前需在真实
-    Painter 上验证 move/duplicate 带 effect 的图层确实会回传 warnings。
+    stack_kind: "content" 或 "mask"。
+    API 名依据 SP 10.x LayerNode（content_effects() / mask_effects()），
+    并带常见命名变体作回退。即便全部不可用，也通过返回 None 让上层告警，
+    绝不把「探测失败」伪装成「没有 effect」。
     """
     candidates = {
         "content": ("content_effects", "get_content_effects"),
@@ -145,8 +148,8 @@ def _node_effect_count(node, stack_kind: str) -> int:
             try:
                 return len(list(fn()))
             except Exception:
-                pass
-    return 0
+                continue
+    return None
 
 
 def _copy_mask(src_node, dst_node, warnings: list) -> None:
@@ -171,7 +174,12 @@ def _copy_mask(src_node, dst_node, warnings: list) -> None:
         )
         return
     mask_effects = _node_effect_count(src_node, "mask")
-    if mask_effects:
+    if mask_effects is None:
+        warnings.append(
+            f"layer {src_node.get_name()!r}: could not verify mask effects — "
+            "if the mask had smart-mask/generator effects they were NOT copied"
+        )
+    elif mask_effects:
         warnings.append(
             f"layer {src_node.get_name()!r}: {mask_effects} mask effect(s) "
             "(e.g. smart mask / generator) were NOT copied — re-apply manually"
@@ -223,7 +231,12 @@ def _clone_node(src_node, insert_pos, warnings: list = None):
     # 遮罩与 content effect（对所有层类型统一处理）
     _copy_mask(src_node, new_node, warnings)
     content_effects = _node_effect_count(src_node, "content")
-    if content_effects:
+    if content_effects is None:
+        warnings.append(
+            f"layer {src_node.get_name()!r}: could not verify content effects — "
+            "if the layer had filter/generator/levels effects they were NOT copied"
+        )
+    elif content_effects:
         warnings.append(
             f"layer {src_node.get_name()!r}: {content_effects} content effect(s) "
             "(filter/generator/levels/...) were NOT copied — re-apply manually"
@@ -447,18 +460,33 @@ def apply_material(layer_id: str, material_name: str) -> dict:
             raise ValueError(f"Material not found: {material_name!r}")
 
         rid = resource.identifier()
-        for ch in (ls.ChannelType.BaseColor, ls.ChannelType.Roughness,
-                   ls.ChannelType.Metallic, ls.ChannelType.Height, ls.ChannelType.Normal):
+        channels = (ls.ChannelType.BaseColor, ls.ChannelType.Roughness,
+                    ls.ChannelType.Metallic, ls.ChannelType.Height, ls.ChannelType.Normal)
+        applied = []
+        failed = []
+        for ch in channels:
             try:
                 node.set_source(ch, rid)
+                applied.append(ch.name)
             except Exception:
+                failed.append(ch.name)
                 _log_warning(
                     f"apply_material: failed to set source for channel {ch} "
                     f"on layer {layer_id!r} with material {material_name!r} — "
                     f"{_traceback.format_exc()}"
                 )
-                pass
-        return {"ok": True, "material": material_name, "layer_id": str(node.uid())}
+        # 所有通道都失败 → 材质实际未应用，不能谎报成功。
+        if not applied:
+            raise RuntimeError(
+                f"apply_material: failed to apply {material_name!r} to any channel "
+                f"of layer {layer_id!r} (all {len(channels)} channels errored)"
+            )
+        result = {"ok": True, "material": material_name,
+                  "layer_id": str(node.uid()), "applied_channels": applied}
+        if failed:
+            # 部分通道失败：告知调用方，避免误以为完整应用。
+            result["failed_channels"] = failed
+        return result
 
 
 def capture_viewport(mode: str = "quick") -> dict:
@@ -709,6 +737,16 @@ def group_layers(layer_ids: list) -> dict:
 
     with _auto_batch("Group layers"):
         nodes = [_find_layer(uid) for uid in layer_ids]
+        # 去重：同一个 id 传两次会让同一节点被克隆两次、并对已删除节点二次
+        # delete_node。按 uid 去重并保持首次出现顺序。
+        seen_uids = set()
+        deduped = []
+        for n in nodes:
+            u = n.uid()
+            if u not in seen_uids:
+                seen_uids.add(u)
+                deduped.append(n)
+        nodes = deduped
         stack = ts.get_active_stack()
         root_nodes = ls.get_root_layer_nodes(stack)
 
@@ -781,8 +819,12 @@ def set_texture_set_resolution(width: int, height: int) -> dict:
     for textureset in ts.all_texture_sets():
         if textureset.get_stack() is stack:
             textureset.set_resolution(width, height)
-            return {"ok": True}
-    return {"ok": True}
+            return {"ok": True, "width": width, "height": height}
+    # 没有纹理集匹配当前活动 stack → 分辨率根本没改，不能谎报成功。
+    raise RuntimeError(
+        "set_texture_set_resolution: could not match the active stack to any "
+        "texture set; resolution was NOT changed"
+    )
 
 
 def get_project_info() -> dict:
@@ -865,8 +907,13 @@ def frame_mesh() -> dict:
         else:
             dx, dy, dz = dx / length, dy / length, dz / length
 
-        # Distance needed to frame the bounding box within the current FOV
-        fov_rad = math.radians(cam.field_of_view / 2.0)
+        # Distance needed to frame the bounding box within the current FOV.
+        # 夹取 FOV 到 (0, 180) 的安全区间：fov<=0（正交/退化相机）会让
+        # tan(0)=0 触发除零；fov>=180 让 tan 爆炸使 distance≈0（相机贴进模型）。
+        fov_deg = cam.field_of_view
+        if not (0.0 < fov_deg < 180.0):
+            fov_deg = 45.0
+        fov_rad = math.radians(fov_deg / 2.0)
         distance = radius / math.tan(fov_rad) * 1.2
 
         # Move camera along current line of sight to the proper distance
@@ -915,12 +962,18 @@ def end_batch() -> dict:
     global _batch_scope
     if _batch_scope is None:
         raise RuntimeError("No active batch. Call begin_batch() first.")
+    commit_error = None
     try:
         _batch_scope.__exit__(None, None, None)
     except Exception as exc:
-        _log_info(f"end_batch error: {exc}")
+        # 提交失败必须如实上报，而非谎报 ok。但无论成败都要清空 _batch_scope，
+        # 否则后续 begin_batch 会永远报「batch already active」卡死。
+        commit_error = exc
+        _log_warning(f"end_batch commit failed: {exc}")
     finally:
         _batch_scope = None
+    if commit_error is not None:
+        raise RuntimeError(f"end_batch: failed to commit batch — {commit_error}")
     _log_info("end_batch: committed")
     return {"ok": True}
 
@@ -1027,8 +1080,12 @@ def window_grab(region: dict = None) -> dict:
     gdi32.DeleteDC(hdc_mem)
     user32.ReleaseDC(hwnd, hdc_window)
 
-    from PySide2.QtGui import QImage, QPixmap
-    from PySide2.QtCore import QBuffer, QIODevice
+    try:
+        from PySide2.QtGui import QImage, QPixmap
+        from PySide2.QtCore import QBuffer, QIODevice
+    except ImportError:
+        from PySide6.QtGui import QImage, QPixmap          # type: ignore
+        from PySide6.QtCore import QBuffer, QIODevice      # type: ignore
     # 注意：QImage 不拷贝传入的缓冲，只持有指针。必须保留 raw 的 Python 引用，
     # 否则临时 bytes 被回收后 QImage 指向已释放内存（use-after-free）。
     raw = bytes(pixel_buf)
@@ -1429,26 +1486,31 @@ def sp_shortcut(action: str) -> dict:
 # ── 内部工具 ──────────────────────────────────────────────────────────────────
 
 def list_export_presets() -> list:
-    """列出所有可用的导出预设名称。"""
-    import substance_painter.resource as r
+    """列出所有可用的导出预设名称。
+
+    实机（SP 10.0.1）已验证：导出预设不在 resource.search() 里（没有
+    EXPORT_PRESET 这个 Type），而是通过 substance_painter.export 的
+    list_predefined_export_presets() / list_resource_export_presets() 获取。
+    """
+    import substance_painter.export as ex
     presets = []
-    for res in r.search(""):
-        try:
-            if res.type().name == "EXPORT_PRESET":
-                presets.append(res.gui_name())
-        except (ValueError, AttributeError):
-            continue
-    # Fallback: try JS API if resource search returns nothing
-    if not presets:
-        try:
-            import substance_painter.js as js
-            result = js.evaluate(
-                "alg.mapexport.presets().map(function(p){return p.name;})"
-            )
-            if isinstance(result, list):
-                presets = result
-        except Exception:
-            pass
+    try:
+        for p in ex.list_predefined_export_presets():
+            name = getattr(p, "name", None)
+            if name:
+                presets.append(name)
+    except Exception:
+        _log_warning("list_export_presets: predefined query failed — "
+                     + _traceback.format_exc())
+    try:
+        for p in ex.list_resource_export_presets():
+            rid = getattr(p, "resource_id", None)
+            name = getattr(rid, "name", None) if rid else None
+            if name:
+                presets.append(name)
+    except Exception:
+        _log_warning("list_export_presets: resource query failed — "
+                     + _traceback.format_exc())
     return sorted(set(presets))
 
 
@@ -1596,8 +1658,26 @@ def _require_smart_api(fn_name: str) -> None:
 
 
 def _hex_to_rgb(hex_color: str) -> tuple:
-    h = hex_color.lstrip("#")
-    return tuple(int(h[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+    """把 "#RRGGBB" / "RRGGBB" / "#RGB" 解析为 (r,g,b) 浮点 (0..1)。
+
+    校验长度与字符，给出清晰错误而非裸 ValueError（输入来自用户/LLM）。
+    """
+    if not isinstance(hex_color, str):
+        raise ValueError(f"color must be a hex string like '#RRGGBB', got {hex_color!r}")
+    h = hex_color.strip().lstrip("#")
+    # 支持 3 位简写（#RGB → #RRGGBB）
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    if len(h) != 6:
+        raise ValueError(
+            f"color must be a 6-digit (or 3-digit) hex like '#8B4513', got {hex_color!r}"
+        )
+    try:
+        return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except ValueError:
+        raise ValueError(
+            f"color contains non-hex characters: {hex_color!r}"
+        )
 
 
 def set_iray_params(
@@ -1758,23 +1838,29 @@ def _capture_iray() -> dict:
 
 
 def _resolve_channel(channel: str):
-    """将字符串 channel 名称转换为 ChannelType 枚举值。"""
+    """将字符串 channel 名称转换为 ChannelType 枚举值。
+
+    实机（SP 10.0.1）已验证：真实 ChannelType 用 "AO"（不是 "AmbientOcclusion"），
+    且成员随版本不同。因此必须用 getattr 防御式构建映射 —— 此前直接访问
+    ls.ChannelType.AmbientOcclusion 会在建表时即抛 AttributeError，导致所有走
+    _resolve_channel 的 substance 源查询全部失败（被上层误报为「无 source」）。
+    """
     import substance_painter.layerstack as ls
-    mapping = {
-        "BaseColor":  ls.ChannelType.BaseColor,
-        "Roughness":  ls.ChannelType.Roughness,
-        "Metallic":   ls.ChannelType.Metallic,
-        "Height":     ls.ChannelType.Height,
-        "Normal":     ls.ChannelType.Normal,
-        "Emissive":   ls.ChannelType.Emissive,
-        "Specular":   ls.ChannelType.Specular,
-        "Opacity":    ls.ChannelType.Opacity,
-        "AmbientOcclusion": ls.ChannelType.AmbientOcclusion,
+
+    # 友好别名 → 真实成员名（同名的直接用自身）
+    aliases = {
+        "AmbientOcclusion": "AO",
     }
-    if hasattr(ls.ChannelType, "Scattering"):
-        mapping["Scattering"] = ls.ChannelType.Scattering
-    if hasattr(ls.ChannelType, "Translucency"):
-        mapping["Translucency"] = ls.ChannelType.Translucency
+    # 常用通道 + 真实枚举里实际存在的全部成员都可用
+    wanted = ["BaseColor", "Roughness", "Metallic", "Height", "Normal",
+              "Emissive", "Specular", "Opacity", "AO", "AmbientOcclusion",
+              "Scattering", "Translucency", "Displacement", "Glossiness"]
+    mapping = {}
+    for name in wanted:
+        real = aliases.get(name, name)
+        val = getattr(ls.ChannelType, real, None)
+        if val is not None:
+            mapping[name] = val
 
     if channel in mapping:
         return mapping[channel]
@@ -1782,23 +1868,34 @@ def _resolve_channel(channel: str):
 
 
 def _serialize_property_value(value) -> object:
-    """将 PropertyValue 对象序列化为 JSON 兼容的基本类型。"""
-    import substance_painter.colormanagement as cm
-    try:
-        raw = value.value()
-    except Exception:
-        return str(value)
+    """将参数值序列化为 JSON 兼容的基本类型。
 
-    # Color 对象
+    实机（SP 10.0.1）已验证：SourceSubstance.get_parameters() 直接返回**原生**
+    值（int/float/str），不是带 .value() 的 PropertyValue。此前无条件调用
+    value.value() 会抛错并退化成 str(...)，把 0.5 序列化成 "0.5"。这里改为：
+    原生类型直接用，仅当对象提供可调用 .value() 时才解包。
+    """
+    import substance_painter.colormanagement as cm
+
+    # 已是原生标量 → 直接返回
+    if isinstance(value, bool) or isinstance(value, (int, float, str)):
+        return value
+
+    # 形如 PropertyValue 的包装对象：有可调用 value() 才解包
+    raw = value
+    v_attr = getattr(value, "value", None)
+    if callable(v_attr):
+        try:
+            raw = v_attr()
+        except Exception:
+            raw = value
+
     if isinstance(raw, cm.Color):
         return {"r": raw.value_raw[0], "g": raw.value_raw[1], "b": raw.value_raw[2]}
-    # 枚举
-    if hasattr(raw, "name"):
-        return raw.name
-    # 基本类型
-    if isinstance(raw, (int, float, bool, str)):
+    if isinstance(raw, bool) or isinstance(raw, (int, float, str)):
         return raw
-    # Tuple/list
+    if hasattr(raw, "name"):   # 枚举
+        return raw.name
     if isinstance(raw, (tuple, list)):
         return list(raw)
     return str(raw)
@@ -2037,23 +2134,37 @@ def get_substance_parameters(layer_id: str, channel: str = None) -> dict:
 
 def set_substance_parameters(layer_id: str, params: dict,
                              channel: str = None) -> dict:
-    """修改程序化源参数。params 为 {name: value, ...}。"""
-    import substance_painter.properties as sprop
+    """修改程序化源参数。params 为 {name: value, ...}。
 
+    实机（SP 10.0.1）已验证：SourceSubstance.set_parameters() 直接接收
+    {name: 原生值} 的 dict（不是 PropertyValue 包装）。此前用
+    sprop.PropertyValue(v) 包装会导致设置失败。bool 参数按 API 警告用 0/1。
+    """
     source = _get_substance_source(layer_id, channel)
 
-    # 将原始值包装为 PropertyValue
-    wrapped = {}
-    for k, v in params.items():
-        try:
-            wrapped[k] = sprop.PropertyValue(v)
-        except Exception as e:
-            raise ValueError(
-                f"Failed to wrap parameter {k!r}={v!r}: {e}"
-            ) from e
+    # 读取当前参数用于类型对齐：把传入值强转成与现值相同的原生类型，
+    # 避免 "0.5"(str) 这类被拒。无现值参考时按值本身类型传。
+    try:
+        current = source.get_parameters()
+    except Exception:
+        current = {}
+
+    def _coerce(name, val):
+        cur = current.get(name)
+        if isinstance(cur, bool):
+            return 1 if (val in (1, "1", True, "true", "True")) else 0
+        if isinstance(cur, int) and not isinstance(cur, bool):
+            try: return int(float(val))
+            except Exception: return val
+        if isinstance(cur, float):
+            try: return float(val)
+            except Exception: return val
+        return val
+
+    coerced = {k: _coerce(k, v) for k, v in params.items()}
 
     with _auto_batch("Set substance parameters"):
-        source.set_parameters(wrapped)
+        source.set_parameters(coerced)
 
     _log_info(
         f"set_substance_parameters layer={layer_id!r} "
@@ -2186,7 +2297,14 @@ def set_tone_mapping(function: str) -> dict:
     """设置色调映射函数（"Linear" 或 "ACES"）。"""
     import substance_painter.display as display
 
-    valid = {x.name: x for x in display.ToneMappingFunction}
+    # 实机（SP 10.0.1）：ToneMappingFunction 是 pybind11 枚举，不可直接迭代，
+    # 需经 __members__。带回退兼容测试 mock 的可迭代实现。
+    enum = display.ToneMappingFunction
+    members = getattr(enum, "__members__", None)
+    if members:
+        valid = dict(members)
+    else:
+        valid = {x.name: x for x in enum}
     if function not in valid:
         raise ValueError(
             f"Unknown tone mapping: {function!r}. Valid: {sorted(valid.keys())}"
@@ -2450,6 +2568,24 @@ def set_selected_nodes(node_ids: list) -> dict:
 # ── Phase 16: 烘焙 API ──────────────────────────────────────────────────────────
 
 
+def _iter_mesh_map_usages():
+    """枚举 MeshMapUsage 的所有成员。
+
+    实机（SP 10.0.1）已验证：MeshMapUsage 是 pybind11 枚举，**不可直接迭代**
+    （`for x in MeshMapUsage` 抛 'pybind11_type' object is not iterable）。
+    必须经 __members__.values()。带回退兼容旧/测试 mock 的可迭代实现。
+    """
+    import substance_painter.textureset as ts_mod
+    enum = ts_mod.MeshMapUsage
+    members = getattr(enum, "__members__", None)
+    if members:
+        return list(members.values())
+    try:
+        return list(enum)
+    except TypeError:
+        return []
+
+
 def get_baking_parameters(texture_set_name: str) -> dict:
     """读取纹理集的烘焙参数。"""
     import substance_painter.baking as baking
@@ -2474,7 +2610,7 @@ def get_baking_parameters(texture_set_name: str) -> dict:
 
     # 序列化各 baker 参数
     import substance_painter.textureset as ts_mod
-    for map_usage in ts_mod.MeshMapUsage:
+    for map_usage in _iter_mesh_map_usages():
         try:
             baker_params = bp.baker(map_usage)
             if baker_params:
@@ -2519,14 +2655,19 @@ def set_baking_parameters(texture_set_name: str,
 
     bp = baking.BakingParameters.from_texture_set_name(texture_set_name)
     updates = {}
+    unmatched = []   # 调用方传了、但在 SP 属性表里找不到对应名字的键
 
     if common_params:
         common = bp.common()
         for name, value in common_params.items():
+            matched = False
             for prop_name, prop in common.items():
                 if prop_name.lower() == name.lower():
                     updates[prop] = sprop.PropertyValue(value)
+                    matched = True
                     break
+            if not matched:
+                unmatched.append(name)
 
     if baker_params:
         for usage_name, params_dict in baker_params.items():
@@ -2534,14 +2675,26 @@ def set_baking_parameters(texture_set_name: str,
                 usage = getattr(ts_mod.MeshMapUsage, usage_name)
                 baker = bp.baker(usage)
                 for name, value in params_dict.items():
+                    matched = False
                     for prop_name, prop in baker.items():
                         if prop_name.lower() == name.lower():
                             updates[prop] = sprop.PropertyValue(value)
+                            matched = True
                             break
+                    if not matched:
+                        unmatched.append(f"{usage_name}.{name}")
             except Exception as e:
                 raise ValueError(
                     f"Invalid baker usage {usage_name!r}: {e}"
                 ) from e
+
+    # 调用方传了参数却一个都没匹配上 → 全被静默丢弃，不能谎报成功。
+    if (common_params or baker_params) and not updates:
+        raise ValueError(
+            "set_baking_parameters: none of the given parameter names matched "
+            f"this texture set's baking properties — nothing was changed. "
+            f"Unknown: {unmatched}"
+        )
 
     if updates:
         with _auto_batch("Set baking parameters"):
@@ -2549,10 +2702,10 @@ def set_baking_parameters(texture_set_name: str,
 
     _log_info(
         f"set_baking_parameters ts={texture_set_name!r} "
-        f"keys={list(updates.keys())}"
+        f"keys={list(updates.keys())} unmatched={unmatched}"
     )
     return {"ok": True, "texture_set": texture_set_name,
-            "updated_count": len(updates)}
+            "updated_count": len(updates), "unmatched_params": unmatched}
 
 
 def bake_texture_set(texture_set_name: str) -> dict:
@@ -2585,7 +2738,7 @@ def get_baking_state(texture_set_name: str) -> dict:
     }
 
     # 获取链接信息
-    for map_usage in ts_mod.MeshMapUsage:
+    for map_usage in _iter_mesh_map_usages():
         try:
             linked = baking.get_linked_texture_sets(ts, map_usage)
             if len(linked) > 1:
@@ -2615,6 +2768,14 @@ def set_baking_state(texture_set_name: str,
     bp = baking.BakingParameters.from_texture_set_name(texture_set_name)
     ts = ts_mod.TextureSet.from_name(texture_set_name)
     changed = []
+
+    # 调用方一个可改项都没给 → 没有任何要做的事，明确报错而非假装成功。
+    if (enabled is None and not curvature_method
+            and enabled_bakers is None and enabled_uv_tiles is None):
+        raise ValueError(
+            "set_baking_state: no state given to change — provide at least one of "
+            "enabled / curvature_method / enabled_bakers / enabled_uv_tiles"
+        )
 
     if enabled is not None:
         bp.set_textureset_enabled(enabled)
@@ -2667,13 +2828,20 @@ def create_project(mesh_file_path: str,
             "A project is already open. Call close_project() first before creating a new one."
         )
 
-    nmf_map = {"OpenGL": project.NormalMapFormat.OpenGL,
-               "DirectX": project.NormalMapFormat.DirectX}
-    ts_map = {"PerVertex": project.TangentSpace.PerVertex,
-              "PerFragment": project.TangentSpace.PerFragment}
-    pw_map = {"Default": project.ProjectWorkflow.Default,
-              "TextureSetPerUVTile": project.ProjectWorkflow.TextureSetPerUVTile,
-              "UVTile": project.ProjectWorkflow.UVTile}
+    # 防御式构建枚举映射：用 getattr 跳过当前 SP 版本不存在的成员，避免硬写
+    # project.X.Member 在成员改名时建表即崩、令整个 create_project 不可用。
+    def _enum_map(enum_obj, names):
+        m = {}
+        for n in names:
+            val = getattr(enum_obj, n, None)
+            if val is not None:
+                m[n] = val
+        return m
+
+    nmf_map = _enum_map(project.NormalMapFormat, ("OpenGL", "DirectX"))
+    ts_map = _enum_map(project.TangentSpace, ("PerVertex", "PerFragment"))
+    pw_map = _enum_map(project.ProjectWorkflow,
+                       ("Default", "TextureSetPerUVTile", "UVTile"))
 
     if normal_map_format not in nmf_map:
         raise ValueError(
@@ -2788,37 +2956,56 @@ def list_project_metadata(context: str) -> dict:
 
 
 def list_resources_by_usage(usage: str, search: str = "") -> dict:
-    """按用途类型列出资源（FILTER, GENERATOR, SUBSTANCE, SMART_MATERIAL 等）。
+    """按用途列出资源（filter / generator / substance / smart_material 等）。
 
     usage: 资源用途，如 "filter", "generator", "substance", "smart_material"
+
+    实机（SP 10.0.1）已验证：用途概念（FILTER/GENERATOR/TEXTURE/ENVIRONMENT…）
+    位于 resource.Usage 枚举，而非 resource.Type（后者只有 SUBSTANCE/FONT/IMAGE…）。
+    资源用 res.usages()（返回 Usage 列表）表达用途，因此必须用 r.Usage.* 配
+    res.usages() 来筛选。
     """
     import substance_painter.resource as r
 
-    # res.type() 返回 resource.Type 枚举，因此映射必须用 r.Type 而非 r.Usage
-    # （二者是不同枚举，混用会导致比较恒为 False、结果恒空）。
-    type_map = {
-        "filter": r.Type.FILTER,
-        "generator": r.Type.GENERATOR,
-        "substance": r.Type.SUBSTANCE,
-        "smart_material": r.Type.SMART_MATERIAL,
-        "smart_mask": r.Type.SMART_MASK,
-        "texture": r.Type.TEXTURE,
-        "environment": r.Type.ENVIRONMENT,
-        "export_preset": r.Type.EXPORT_PRESET,
+    # 友好名 → 真实 Usage 成员名。与 _resolve_channel 同理用 getattr 防御式构建：
+    # 不同 SP 版本的 Usage 成员可能增删/改名，硬写 r.Usage.X 一旦某个成员不存在，
+    # 建表时就整体抛 AttributeError，连合法用途也查不了。getattr 跳过不存在的
+    # 成员，只暴露当前 SP 真正支持的用途。
+    usage_names = {
+        "filter": "FILTER",
+        "generator": "GENERATOR",
+        "substance": "PROCEDURAL",   # SUBSTANCE 类材质在 Usage 里是 PROCEDURAL
+        "smart_material": "SMART_MATERIAL",
+        "smart_mask": "SMART_MASK",
+        "texture": "TEXTURE",
+        "environment": "ENVIRONMENT",
+        "export_preset": "EXPORT",
+        "alpha": "ALPHA",
+        "brush": "BRUSH",
+        "base_material": "BASE_MATERIAL",
+        "color_lut": "COLOR_LUT",
+        "shader": "SHADER",
+        "font": "FONT",
     }
+    usage_map = {}
+    for friendly, member in usage_names.items():
+        val = getattr(r.Usage, member, None)
+        if val is not None:
+            usage_map[friendly] = val
 
     usage_lower = usage.lower()
-    if usage_lower not in type_map:
+    if usage_lower not in usage_map:
         raise ValueError(
-            f"Unknown usage: {usage!r}. Valid: {sorted(type_map.keys())}"
+            f"Unknown usage: {usage!r}. Valid: {sorted(usage_map.keys())}"
         )
 
-    target_type = type_map[usage_lower]
+    target_usage = usage_map[usage_lower]
     all_resources = r.search(search) if search else r.search("")
     result = []
     for res in all_resources:
         try:
-            if res.type() == target_type:
+            # res.usages() 返回 Usage 列表；目标用途在其中即匹配。
+            if target_usage in res.usages():
                 result.append(res.gui_name())
         except Exception:
             pass
