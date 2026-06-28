@@ -584,6 +584,21 @@ class TestSetResolutionNoMatchRaises:
         result = handlers.set_texture_set_resolution(2048, 2048)
         assert result["ok"] is True
 
+    def test_matches_by_value_not_identity(self, fresh_layer_stack):
+        """实机回归：pybind11 每次 get_stack()/get_active_stack() 返回不同
+        包装对象（is False / == True）。mock 现也如此，handler 必须用 ==
+        匹配；若误用 is 会匹配不到而 raise，本测试即失败。"""
+        import substance_painter.textureset as ts
+        active = ts.get_active_stack()
+        ts_stack = ts.all_texture_sets()[0].get_stack()
+        # 不同对象（is False）但值相等（== True）——精确复现实机行为
+        assert active is not ts_stack
+        assert active == ts_stack
+        # handler 必须靠 == 找到纹理集
+        result = handlers.set_texture_set_resolution(1024, 1024)
+        assert result["ok"] is True
+        assert result["width"] == 1024
+
 
 class TestEndBatchCommitFailure:
     def test_commit_failure_raises_and_clears_scope(self, fresh_layer_stack):
@@ -957,4 +972,28 @@ class TestSetEnvironmentUsageFiltered:
         handlers.set_environment("Studio")
         # 绝不能选中 brush 诱饵的 id —— 必须是某个环境用途资源
         assert captured["rid"] != "id://decoy-brush"
+
+
+class TestExportTexturesRealApi:
+    """实机回归：export_project_textures 接受 JSON dict（无 ExportConfig 类），
+    返回 .textures 为 {stack: [files]} dict。守住 handler 用真实 API。"""
+
+    def test_returns_flattened_files(self, fresh_layer_stack):
+        out = handlers.export_textures(preset="PBR Metallic Roughness",
+                                       output_dir="/tmp/export")
+        # 从 {stack: [...]} 展平为单一列表
+        assert out["count"] == len(out["files"])
+        assert out["count"] > 0
+        assert all(isinstance(f, str) for f in out["files"])
+
+    def test_unknown_preset_raises(self, fresh_layer_stack):
+        with pytest.raises(ValueError, match="Export preset not found"):
+            handlers.export_textures(preset="__NoSuchPreset__",
+                                     output_dir="/tmp/export")
+
+    def test_resource_preset_resolves(self, fresh_layer_stack):
+        # 资源预设（经 resource_id.url()）也应能解析
+        out = handlers.export_textures(preset="Unity HD Render Pipeline",
+                                       output_dir="/tmp/export")
+        assert out["count"] > 0
 

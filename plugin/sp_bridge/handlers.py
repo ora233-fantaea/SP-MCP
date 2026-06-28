@@ -85,7 +85,7 @@ def _auto_batch(name: str):
 # ── 节点克隆辅助 — 供 move/group/ungroup 进行 delete+re-insert ──
 
 
-def _copy_channels(src_node, dst_node):
+def _copy_channels(src_node, dst_node, warnings=None):
     import substance_painter.layerstack as ls
     import substance_painter.colormanagement as cm
     for ch in (ls.ChannelType.BaseColor, ls.ChannelType.Roughness,
@@ -100,13 +100,33 @@ def _copy_channels(src_node, dst_node):
                     raw = c.value_raw
                     dst_node.set_source(ch, cm.Color(raw[0], raw[1], raw[2]))
                 else:
-                    dst_node.set_source(ch, src)
-        except (AttributeError, TypeError):
+                    # 实机（SP 10.0.1）已验证：procedural 图层的 source 是
+                    # SourceSubstance，set_source 只接受 ResourceID / Color /
+                    # AnchorPointEffectNode，传 SourceSubstance 会抛 "Unknown
+                    # parameter type"（非 TypeError/AttributeError），此前会逃逸
+                    # except 让整个 duplicate/move/group 崩溃。这类 source 无法
+                    # 直接复制，跳过并告警，绝不让克隆整体失败。
+                    src_kind = type(src).__name__
+                    if warnings is not None:
+                        warnings.append(
+                            f"layer {src_node.get_name()!r} channel {ch.name}: "
+                            f"{src_kind} source could not be copied automatically "
+                            "— re-apply the material/substance manually"
+                        )
+                    _log_warning(
+                        f"_copy_channels: skipped non-copyable source {src_kind} "
+                        f"for channel {ch} on {type(src_node).__name__}"
+                    )
+        except Exception:
+            if warnings is not None:
+                warnings.append(
+                    f"layer {src_node.get_name()!r} channel {ch.name}: "
+                    "source could not be copied — re-apply manually"
+                )
             _log_warning(
                 f"_copy_channels: failed to copy source for channel {ch} "
                 f"on node {type(src_node).__name__} — {_traceback.format_exc()}"
             )
-            pass
 
 
 def _node_has_mask(node) -> bool:
@@ -217,7 +237,7 @@ def _clone_node(src_node, insert_pos, warnings: list = None):
         new_node = ls.insert_paint(insert_pos)
         new_node.set_name(src_node.get_name())
         new_node.set_visible(src_node.is_visible())
-        _copy_channels(src_node, new_node)
+        _copy_channels(src_node, new_node, warnings)
         warnings.append(
             f"layer {src_node.get_name()!r}: paint strokes were NOT copied "
             "(channels only) — re-paint manually"
@@ -226,7 +246,7 @@ def _clone_node(src_node, insert_pos, warnings: list = None):
         new_node = ls.insert_fill(insert_pos)
         new_node.set_name(src_node.get_name())
         new_node.set_visible(src_node.is_visible())
-        _copy_channels(src_node, new_node)
+        _copy_channels(src_node, new_node, warnings)
 
     # 遮罩与 content effect（对所有层类型统一处理）
     _copy_mask(src_node, new_node, warnings)
@@ -498,17 +518,68 @@ def capture_viewport(mode: str = "quick") -> dict:
         raise ValueError(f"Unknown capture mode: {mode!r}. Use 'quick' or 'render'.")
 
 
+def _resolve_export_preset_url(preset: str) -> str:
+    """把导出预设名解析为可用于 json_config 的 preset URL。
+
+    实机（SP 10.0.1）已验证：预定义预设（PredefinedExportPreset）有 .name/.url；
+    资源预设（ResourceExportPreset）有 .resource_id（可 .url()）。优先精确名匹配。
+    """
+    import substance_painter.export as ex
+    # 预定义预设：直接有 name + url
+    try:
+        for p in ex.list_predefined_export_presets():
+            if getattr(p, "name", None) == preset:
+                return p.url
+    except Exception:
+        _log_warning("export preset(predefined) lookup failed — "
+                     + _traceback.format_exc())
+    # 资源预设：经 resource_id.url()
+    try:
+        for p in ex.list_resource_export_presets():
+            rid = getattr(p, "resource_id", None)
+            if rid is not None and getattr(rid, "name", None) == preset:
+                return rid.url()
+    except Exception:
+        _log_warning("export preset(resource) lookup failed — "
+                     + _traceback.format_exc())
+    raise ValueError(
+        f"Export preset not found: {preset!r}. "
+        "Use list_export_presets() to see available presets."
+    )
+
+
 def export_textures(preset: str, output_dir: str) -> dict:
     if not output_dir:
         raise ValueError("output_dir must not be empty")
-    import substance_painter.export
-    config = substance_painter.export.ExportConfig()
-    config.export_path = output_dir
-    config.preset = preset
-    result = substance_painter.export.export_project_textures(config)
-    files = [str(f) for f in result.textures]
-    _log_info(f"export_textures: preset={preset!r} output_dir={output_dir!r} files={len(files)}")
-    return {"files": files}
+    import substance_painter.export as ex
+
+    # 实机（SP 10.0.1）已验证：export_project_textures 接受 **JSON dict 配置**，
+    # 没有 ExportConfig 类；返回值的 .textures 是 {stack: [files]} 的 dict（非列表）。
+    # 此前用 ExportConfig() 对象 + result.textures 当列表，实机会立即崩。
+    preset_url = _resolve_export_preset_url(preset)
+    json_config = {
+        "exportPath": output_dir,
+        "defaultExportPreset": preset_url,
+        "exportShaderParams": False,
+    }
+    result = ex.export_project_textures(json_config)
+
+    # result.textures 是 {stack_name: [file, ...]}；展平成单一文件列表。
+    files = []
+    textures = getattr(result, "textures", {}) or {}
+    if isinstance(textures, dict):
+        for stack_files in textures.values():
+            files.extend(str(f) for f in stack_files)
+    else:
+        files = [str(f) for f in textures]
+
+    status_name = getattr(getattr(result, "status", None), "name", None)
+    _log_info(f"export_textures: preset={preset!r} output_dir={output_dir!r} "
+              f"files={len(files)} status={status_name}")
+    out = {"files": files, "count": len(files)}
+    if status_name:
+        out["status"] = status_name
+    return out
 
 
 def run_python(code: str) -> dict:
@@ -660,14 +731,21 @@ def get_layer_channels(layer_id: str) -> dict:
     node = _find_layer(layer_id)
     import substance_painter.layerstack as ls
 
+    # 实机（SP 10.0.1）已验证：只有 FillLayerNode 有 get_source；PaintLayerNode
+    # 等没有该方法，无条件调用会抛 AttributeError 让整函数崩。这里先探测，
+    # 不支持 source 的图层只回 opacity/blend_mode（source 字段省略）。
+    has_source = hasattr(node, "get_source")
+
     result = {}
     for ch_name in ("BaseColor", "Roughness", "Metallic", "Height", "Normal"):
-        ch = getattr(ls.ChannelType, ch_name)
-        source = node.get_source(ch)
+        ch = getattr(ls.ChannelType, ch_name, None)
+        if ch is None:
+            continue
         entry = {
             "opacity":    node.get_opacity(ch),
             "blend_mode": node.get_blending_mode(ch).name,
         }
+        source = node.get_source(ch) if has_source else None
         if source is not None:
             # SourceUniformColor → get_color().value_raw
             if hasattr(source, "get_color"):
@@ -817,8 +895,15 @@ def set_texture_set_resolution(width: int, height: int) -> dict:
     import substance_painter.textureset as ts
     stack = ts.get_active_stack()
     for textureset in ts.all_texture_sets():
-        if textureset.get_stack() is stack:
-            textureset.set_resolution(width, height)
+        # 必须用 == 而非 is：实机（SP 10.0.1）已验证 pybind11 每次 get_stack()/
+        # get_active_stack() 返回**不同的 Python 包装对象**（指向同一底层 C++
+        # stack），用 `is` 比较恒为 False，导致永远匹配不到、整函数报错失败。
+        # Stack 定义了值相等（同一 stack 的两个包装 == 为 True）。
+        if textureset.get_stack() == stack:
+            # 实机（SP 10.0.1）已验证：set_resolution 接受单个 Resolution 对象，
+            # 不是 (width, height) 两个位置参数。此前传两个会抛
+            # "set_resolution() takes 2 positional arguments but 3 were given"。
+            textureset.set_resolution(ts.Resolution(width, height))
             return {"ok": True, "width": width, "height": height}
     # 没有纹理集匹配当前活动 stack → 分辨率根本没改，不能谎报成功。
     raise RuntimeError(

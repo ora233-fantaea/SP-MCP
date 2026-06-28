@@ -220,8 +220,16 @@ def _make_sp_mock():
     MockPaintNode = _make_node_class("PaintLayerNode")
 
     class MockStack:
+        # 模拟 pybind11 的 Stack：按 stack_id 值相等（而非对象 identity）。
+        # 真实 SP 每次 get_stack()/get_active_stack() 返回不同包装对象但指向
+        # 同一底层 stack，==True / is False。让 mock 也如此，才能守住 handler
+        # 里「必须用 == 不能用 is」这条（见 set_texture_set_resolution 回归）。
         def __init__(self, stack_id=0):
             self.stack_id = stack_id
+        def __eq__(self, other):
+            return isinstance(other, MockStack) and self.stack_id == other.stack_id
+        def __hash__(self):
+            return hash(("MockStack", self.stack_id))
 
     # ── 全局状态 ──
     _root_nodes = []
@@ -574,10 +582,15 @@ def _make_sp_mock():
             return self._name
         def get_resolution(self):
             return self._resolution
-        def set_resolution(self, width, height):
-            self._resolution = MockResolution(width, height)
+        def set_resolution(self, new_resolution):
+            # 实机（SP 10.0.1）：set_resolution 接受单个 Resolution 对象，
+            # 而非 (width, height)。mock 同步该签名，逼出 handler 误传两参数。
+            self._resolution = MockResolution(new_resolution.width,
+                                              new_resolution.height)
         def get_stack(self):
-            return self._stack
+            # 每次返回新包装对象（== 按 stack_id 相等，is 为 False），
+            # 精确模拟 pybind11，逼出 handler 里误用 is 的 bug。
+            return MockStack(stack_id=self._stack.stack_id)
         @property
         def material_id(self):
             return self._id
@@ -586,14 +599,16 @@ def _make_sp_mock():
         MockTextureSet(1, "Default"),
         MockTextureSet(2, "MetalParts"),
     ]
-    # 真实 SP 里活动 stack 必属于某个纹理集。让 "Default" 纹理集的 stack 就是
-    # 全局活动 stack（_mock_stack），使 get_active_stack() 能 identity-match 到它，
-    # 否则 set_texture_set_resolution 等按活动 stack 查找的 handler 永远匹配不到。
-    _mock_texture_sets[0]._stack = _mock_stack
+    # 真实 SP 里活动 stack 必属于某个纹理集。让 "Default" 纹理集的 stack_id 与
+    # 全局活动 stack 一致，使 get_active_stack() 能按值（==）匹配到它；但二者是
+    # 不同的 Python 包装对象（is 为 False），从而守住「必须用 == 不能用 is」。
+    _mock_texture_sets[0]._stack = MockStack(stack_id=_mock_stack.stack_id)
 
-    textureset.get_active_stack = lambda: _mock_stack
+    textureset.get_active_stack = lambda: MockStack(stack_id=_mock_stack.stack_id)
     textureset.set_active_stack = lambda stack: None
     textureset.all_texture_sets = lambda: list(_mock_texture_sets)
+    # 实机有 textureset.Resolution(width, height)；set_resolution 收它。
+    textureset.Resolution = MockResolution
     textureset.Stack = MockStack
     textureset.Resolution = MockResolution
     # Add from_name static method to MockTextureSet
@@ -739,17 +754,40 @@ def _make_sp_mock():
 
     # ── substance_painter.export ──
     export = types.ModuleType("substance_painter.export")
-    class ExportConfig:
-        export_path = ""
-        preset = ""
+
+    # 真实 SP 10.0.1：没有 ExportConfig 类；export_project_textures 接受 JSON
+    # dict 配置，返回值的 .textures 是 {stack: [files]} 的 dict（非列表），
+    # 且带 .status（ExportStatus 枚举）。mock 同步这些，逼出 handler 误用。
+    class _ExportStatus:
+        Success = type("ExportStatus", (), {"name": "Success"})()
+
     class ExportResult:
-        textures = ["/tmp/export/BaseColor.png", "/tmp/export/Roughness.png",
-                    "/tmp/export/Metallic.png", "/tmp/export/Normal.png"]
-    export.ExportConfig = ExportConfig
-    export.export_project_textures = lambda config: ExportResult()
-    # 真实 SP 10.0.1: 导出预设经 export 模块列出（不在 resource.search 里）。
+        def __init__(self):
+            self.textures = {
+                "Default": ["/tmp/export/BaseColor.png",
+                            "/tmp/export/Roughness.png",
+                            "/tmp/export/Metallic.png",
+                            "/tmp/export/Normal.png"],
+            }
+            self.status = _ExportStatus.Success
+
+    def _export_project_textures(json_config):
+        # 校验传入的是 dict 配置（不是 ExportConfig 对象），并含必需键。
+        assert isinstance(json_config, dict), "export config must be a JSON dict"
+        assert "exportPath" in json_config
+        assert "defaultExportPreset" in json_config
+        return ExportResult()
+
+    export.export_project_textures = _export_project_textures
+    export.ExportStatus = _ExportStatus
+
+    # 导出预设经 export 模块列出（不在 resource.search 里）。
+    # PredefinedExportPreset 有 .name + .url（字符串属性）；
+    # ResourceExportPreset 有 .resource_id（带 .url() 方法 + .name）。
     class _PredefPreset:
-        def __init__(self, name): self.name = name
+        def __init__(self, name):
+            self.name = name
+            self.url = f"export-preset-generator://{name.replace(' ', '').lower()}"
     class _ResPreset:
         def __init__(self, name): self.resource_id = MockResourceID(name)
     export.list_predefined_export_presets = lambda: [
