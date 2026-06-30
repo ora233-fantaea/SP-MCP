@@ -6,10 +6,15 @@
 [![SP](https://img.shields.io/badge/Substance%20Painter-10.0%2B-ff6b35?style=for-the-badge&logo=adobe&logoColor=white)](https://www.adobe.com/products/substance3d-painter.html)
 [![fastmcp](https://img.shields.io/badge/fastmcp-0.9%2B-6366f1?style=for-the-badge)](https://github.com/jlowin/fastmcp)
 [![requests](https://img.shields.io/badge/requests-2.31%2B-2ea44f?style=for-the-badge)](https://pypi.org/project/requests/)
+[![version](https://img.shields.io/badge/version-0.6.0-22c55e?style=for-the-badge)](./CHANGELOG.md)
+[![tools](https://img.shields.io/badge/MCP%20tools-94-8b5cf6?style=for-the-badge)](#-mcp-tools-94-个-)
+[![tests](https://img.shields.io/badge/tests-464%20passed-brightgreen?style=for-the-badge)](#-调试与排错)
 
 *让 AI 成为你的首席材质艺术家。*
 
 本项目为 Substance 3D Painter 实现了一个 **MCP（Model Context Protocol）Server**，使得各大主流的 LLM（如 OpenCode, Claude Code, Cursor 等）能够通过标准化工具直接与 Painter 交互。该项目旨在利用大模型强大的推理与设计能力，自动化驱动 **视觉创作**（如材质设计、皮肤制作、磨损做旧等）工作流。
+
+> 📌 **v0.6.0**：完成实机全工具审计 —— 80/92 个工具在真实 SP 10.0.1 上逐个调用验证，修复 7 个 mock 自我掩盖的真 bug，bake 改异步架构。详见 [CHANGELOG](./CHANGELOG.md)。
 
 </div>
 
@@ -358,4 +363,4 @@ mcp_servers:
 | **代码热重载** | `import importlib, sp_bridge.handlers; importlib.reload(sp_bridge.handlers)` |
 | **CU 警示条不消失** | 手动调用 `sp_cu_unlock()` 或是重启 Painter |
 
-> 📚 详情及进阶开发指南可参阅代码库内的 [AGENTS.md](./AGENTS.md) 和 [PHASES.md](./PHASES.md)。
+> 📚 详情及进阶开发指南可参阅代码库内的 [AGENTS.md](./AGENTS.md) 和 [PHASES.md](./PHASES.md)。版本变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
