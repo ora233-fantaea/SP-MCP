@@ -128,7 +128,7 @@ mcp_servers:
 
 ---
 
-## 🛠️ MCP Tools (92 个 🆕)
+## 🛠️ MCP Tools (94 个 🆕)
 
 > [!TIP]
 > 所有图层修改操作（`add_fill_layer`、`set_layer_channel`、`apply_smart_material` 等）自动包裹 `ScopedModification`，**每个 API 调用 = 1 条 undo**。
@@ -223,7 +223,7 @@ mcp_servers:
 |------|------|
 | `sp_set_active_texture_set`| 切换活动纹理集 |
 | `sp_set_texture_set_resolution`| 修改纹理集分辨率 |
-| `sp_bake_mesh_maps` | 烘焙 mesh maps（AO/Curvature/Normal 等） |
+| `sp_bake_mesh_maps` | **异步**烘焙 mesh maps（AO/Curvature/Normal 等），立即返回；用 `sp_get_bake_status` 轮询，**勿超时重试** |
 | `sp_add_texture_set_channel` | 给纹理集添加通道 |
 | `sp_remove_texture_set_channel`| 删除纹理集通道 |
 </details>
@@ -267,9 +267,11 @@ mcp_servers:
 </details>
 
 <details>
-<summary><b>🔥 烘焙 API (5)</b></summary>
+<summary><b>🔥 烘焙 API (7)</b></summary>
 
 > 完整 Python 烘焙参数控制，替代 JS `alg.baking.bake()`。
+> `bake_mesh_maps` / `bake_texture_set` 均为异步，立即返回——**不要因延迟/超时重试**，
+> 否则会重复触发烘焙。用 `sp_get_bake_status` 轮询确认完成。
 
 | Tool | 说明 |
 |------|------|
@@ -278,6 +280,8 @@ mcp_servers:
 | `sp_bake_texture_set` | 异步启动纹理集烘焙 |
 | `sp_get_baking_state` | 获取烘焙状态（启用/bakers/UV tiles/链接） |
 | `sp_set_baking_state` | 设置烘焙状态（启用纹理集/bakers/曲率方法） |
+| `sp_get_bake_status` | 轮询 `sp_bake_mesh_maps` 的异步状态（phase/progress/status） |
+| `sp_cancel_bake` | 取消进行中的异步烘焙（基于 StopSource.request_stop） |
 </details>
 
 <details>

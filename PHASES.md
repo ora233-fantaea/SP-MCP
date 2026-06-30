@@ -24,6 +24,13 @@
 | Smart Mask 直接插入 | 需先 `node.add_mask(White)` 再 `insert_smart_mask()` |
 | `schedule_on_ui_thread` 存在 | 不存在，用 QTimer 轮询队列 |
 | `substance_painter.textureset` | 返回所有纹理集，`.name()` 是方法，`.get_resolution()` 返回 `Resolution` 对象 |
+| `node.get_source(ch)` 所有节点都有 | **仅 FillLayerNode 有**；PaintLayerNode 无该方法，需 hasattr 探测（Phase 18） |
+| `set_resolution(width, height)` | 实际 `set_resolution(Resolution(w,h))` 单个对象（Phase 18） |
+| `get_stack() is stack` | pybind11 每次返回不同包装，is 恒 False，必须用 `==`（Phase 18） |
+| `for x in Enum` 迭代枚举 | pybind11 不可迭代，用 `__members__` / `__members__.values()`（Phase 18） |
+| `export.ExportConfig()` | **不存在**；`export_project_textures(dict)` 接受 JSON dict，`.textures` 是 dict（Phase 18） |
+| `StopSource.cancel()` | 实际 `request_stop()`（Phase 18） |
+| `resource.Type.FILTER` 等用途 | 用途在 `resource.Usage`，用 `res.usages()` 配 `r.Usage.*` 筛选（Phase 18） |
 
 遇到 API 不确定时，先用 `sp_run_python` 探索，再写实现。
 
@@ -51,6 +58,7 @@
 | Phase 15 | 效果节点（Filter/Generator/Levels/CompareMask/ColorSelection/Anchor） | ✅ 完成 |
 | Phase 16 | 烘焙 API（Python 原生：参数/状态/异步执行） | ✅ 完成 |
 | Phase 17 | 项目生命周期 + 元数据 + 资源发现 | ✅ 完成 |
+| Phase 18 | 实机全工具审计 + bake 异步化 + iray 读取修复 | ✅ 完成 |
 
 ---
 
@@ -618,13 +626,22 @@ def sp_end_batch() -> dict:
 
 **任务 9.1 — 烘焙 Mesh Maps：**
 
+> ⚠ Phase 18 已改为异步：原同步 `js.evaluate("alg.baking.bake()")` 会阻塞 HTTP，
+> 超时后 SP 内仍执行、被误判失败而重复触发。现用 `baking.bake_async()` 立即返回，
+> 配 `get_bake_status` 轮询 + `cancel_bake` 取消。详见 Phase 18。
+
 ```python
-# handlers.py
+# handlers.py（Phase 18 异步版）
 def bake_mesh_maps(texture_set_name: str) -> dict:
-    """通过 JS API 烘焙指定纹理集的 mesh maps。"""
-    import substance_painter.js as js
-    js.evaluate(f'alg.baking.bake("{texture_set_name}")')
-    return {"ok": True, "texture_set": texture_set_name}
+    """异步烘焙 mesh maps。立即返回 phase=pending，不阻塞。"""
+    import substance_painter.baking as baking
+    import substance_painter.textureset as ts_mod
+    texture_set = ts_mod.TextureSet.from_name(texture_set_name)
+    _ensure_bake_events_registered()  # 注册 BakingProcessEnded/Progress 事件
+    stop_source = baking.bake_async(texture_set)  # 异步，返回 StopSource
+    _bake_stop_sources[texture_set_name] = stop_source
+    _bake_state[texture_set_name] = {"phase": "pending", ...}
+    return {"ok": True, "phase": "pending", ...}
 ```
 
 **任务 9.2 — Texture Set 通道管理：**
@@ -914,15 +931,17 @@ plugin/                →  plugin/
 **目标：** 用 `substance_painter.baking` 原生 API 替代 Phase 9 的 `sp_bake_mesh_maps`（JS 方案），
 提供完整的参数读写 + 状态控制 + 异步执行。
 
-### 实现的 MCP Tools（5 个）
+### 实现的 MCP Tools（7 个）
 
 | Tool | 功能 |
 |------|------|
 | `get_baking_parameters(ts_name)` | 读取 common + 各 baker + 曲率方法 + 启用项 |
-| `set_baking_parameters(ts_name, common?, baker?)` | 设置烘焙参数 |
+| `set_baking_parameters(ts_name, common?, baker?)` | 设置烘焙参数（Phase 18 加固：全未匹配报错） |
 | `bake_texture_set(ts_name)` | 异步启动烘焙 |
 | `get_baking_state(ts_name)` | 读取启用状态/曲率方法/bakers/UV tiles |
-| `set_baking_state(ts_name, ...)` | 设置启用状态/曲率方法/bakers/UV tiles |
+| `set_baking_state(ts_name, ...)` | 设置启用状态/曲率方法/bakers/UV tiles（Phase 18 加固：全 None 报错） |
+| `get_bake_status(ts_name)` | **Phase 18 新增**：轮询 bake_mesh_maps 异步状态（phase/progress/status） |
+| `cancel_bake(ts_name)` | **Phase 18 新增**：取消进行中的烘焙（StopSource.request_stop） |
 
 ### 新发现 API
 
@@ -931,9 +950,13 @@ plugin/                →  plugin/
 | `baking.BakingParameters.from_texture_set_name(name)` | 入口 |
 | `bp.common()` / `bp.baker(MeshMapUsage)` | 参数字典（`{name: Property}`） |
 | `bp.get_curvature_method()` / `bp.get_enabled_bakers()` / `bp.get_enabled_uv_tiles()` | 状态读取 |
-| `textureset.MeshMapUsage` | baker 枚举（AO/Curvature/Normal/...） |
+| `textureset.MeshMapUsage` | baker 枚举（AO/Curvature/Normal/...），pybind11 不可直接迭代，用 `__members__` |
+| `baking.bake_async(texture_set)` | **Phase 18**：异步烘焙入口，返回 StopSource |
+| `StopSource.request_stop()` | **Phase 18**：取消异步烘焙（非 cancel/stop） |
+| `event.DISPATCHER.connect_strong(EventClass, cb)` | **Phase 18**：注册 BakingProcessEnded/Progress 事件 |
+| `event.BakingProcessEnded(status)` / `BakingProcessProgress(progress)` | **Phase 18**：烘焙完成/进度事件 |
 
-> Phase 9 的 `sp_bake_mesh_maps`（JS `alg.baking.bake`）保留，作为快速一键烘焙的备选。
+> Phase 9 的 `sp_bake_mesh_maps`（JS `alg.baking.bake`）已**改用 bake_async 异步化**（Phase 18），保留工具名。
 
 ---
 
@@ -965,9 +988,66 @@ plugin/                →  plugin/
 
 ### 当前工具规模
 
-**MCP tools 总计 92 个**（与 `server/sp_mcp.py` 的 `@mcp.tool()` 数量、
+**MCP tools 总计 94 个**（与 `server/sp_mcp.py` 的 `@mcp.tool()` 数量、
 `handlers.py` 的 `_REGISTRY` 条目数一一对应）。新增工具时三处需同步：
 `sp_mcp.py`（tool 定义）+ `handlers.py`（handler + 注册表）+ 对应 `.opencode/skills`。
+
+---
+
+## Phase 18 — 实机全工具审计 + bake 异步化 + iray 读取修复
+
+**状态：** ✅ 完成
+
+**目标：** 对除 computer-use 外的 80 个工具逐个实机调用验证（只读 28 + 写操作 38
+实机执行 + 破坏性 14 静态核对签名），修复实机暴露的 mock 自我掩盖 bug，并根治
+bake 同步阻塞导致的超时重复烘焙风险。
+
+### 实机暴露并修复的 5 个真 bug
+
+| Bug | 根因 | 修复 |
+|-----|------|------|
+| `get_layer_channels` 在画图层崩 | 无条件调 `get_source()`，但 PaintLayerNode 无该方法 | hasattr 探测，不支持 source 的图层只回 opacity/blend_mode |
+| `_copy_channels` 克隆 procedural 图层崩 | SourceSubstance 传给 set_source 抛 "Unknown parameter type"，逃逸 except | 捕获所有异常 + 跳过并告警，不让克隆整体失败 |
+| `set_texture_set_resolution` 永远匹配不到 | 用 `is` 比较 pybind11 stack 包装（每次返回不同对象，is 恒 False） | 改 `==`（Stack 定义值相等） |
+| `set_texture_set_resolution` set_resolution 崩 | 传 (w,h) 两参数，实际接受单个 Resolution 对象 | 改传 `ts.Resolution(w, h)` |
+| `export_textures` 立即崩 | 用不存在的 `ExportConfig` 类；实际接受 JSON dict，返回 dict textures | 按真实 API 重写：preset 解析为 url + json_config dict + 展平 textures dict |
+
+### bake_mesh_maps 异步化（根治超时重复烘焙）
+
+原同步 `js.evaluate("alg.baking.bake()")` 阻塞 HTTP 到烘焙完成 → 超时后 SP 内仍执行
+→ 客户端误判失败重试 → 重复触发烘焙。改为：
+
+- `bake_mesh_maps` 用 `baking.bake_async()` 立即返回（phase=pending）
+- 注册 `BakingProcessProgress` / `BakingProcessEnded` 事件回调（`DISPATCHER.connect_strong`）
+  驱动状态机 pending→running→done
+- 新增 `get_bake_status`：轮询 phase/progress/status/elapsed
+- 新增 `cancel_bake`：用 `StopSource.request_stop()` 取消（实机验证取消方法名）
+
+### iray 参数读取修复
+
+`get_iray_params` 只扫 QSpinBox，漏读 maxSamples/maxTime（实为 QLineEdit）。统一按
+控件真实类型读：width/height 读 QSpinBox，maxSamples/maxTime 经容器读 QLineEdit。
+
+### 实机验证（全过）
+
+- 只读 28 ✅ + 写操作 38 ✅ 实机执行（测试图层上，batch 包裹，测完清理）
+- 生命周期 5 ✅（save/close/create/reload/open，在废弃项目上实测）
+- computer-use 安全 6 ✅（window_info/grab/focus + 横幅 3 个，不动鼠标）
+- bake 异步链路 ✅（启动→查询→取消，取消后 is_busy=False）
+- iray 参数读写闭环 ✅
+
+### 未实测（明确盲区）
+
+- computer-use 危险 6（mouse_*/key_send/sp_shortcut）：会动鼠标键盘，按约定暂不测
+- iray 实际渲染出图：性能不足，仅验证参数读写 + 异步启动架构
+- bake 实际完成烘焙：性能/磁盘空间不足，仅验证异步链路（启动/查询/取消）
+
+### 关键教训
+
+本轮 5 个 bug 全是 **mock 假装有某 API 而真实 SP 没有**（ExportConfig、画图层 get_source）
+或 **mock 用同一引用掩盖 identity 陷阱**（stack is vs ==）。mock 同步真实 API +
+反向验证（退回旧实现确认测试失败）是防回归的关键。**签名对 ≠ 实跑通**——
+只有真跑才暴露问题。
 
 ---
 

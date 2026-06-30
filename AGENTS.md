@@ -51,6 +51,15 @@ Phase 2 探索发现以下与文档/预期不符的实际 API，所有代码必�
 | Baking 用 Python API | 不存在，用 `js.evaluate("alg.baking.bake(name)")` |
 | Texture Set 通道管理 | Python API 不完整，用 `js.evaluate("alg.texturesets.addChannel(...)")` |
 | `alg.ui.clickButton` | 存在但有 `findChild` 错误（2026-06 现场复测确认 SP 10.0.1 bug），用 Computer Use 鼠标点击替代 |
+| `node.get_source(ch)` 所有节点都有 | **仅 FillLayerNode 有**；PaintLayerNode 无该方法，调用必崩。get_layer_channels 等需 hasattr 探测 |
+| `set_resolution(width, height)` 两参数 | 实际 `set_resolution(Resolution(w,h))` 单个 Resolution 对象；传两参数抛 "takes 2 positional arguments but 3 were given" |
+| `get_stack() is stack` identity 比较 | pybind11 每次返回不同包装对象（is 恒 False）；必须用 `==`（Stack 定义了值相等） |
+| `for x in SomeEnum` 迭代枚举 | pybind11 枚举不可直接迭代（抛 'pybind11_type' object is not iterable）；用 `__members__` / `__members__.values()` |
+| `export.ExportConfig()` 对象 | **不存在**；`export_project_textures(json_config: dict)` 接受 JSON dict，返回 `.textures` 是 `{stack:[files]}` dict（非列表） |
+| `StopSource.cancel()` 取消烘焙 | 实际方法是 `request_stop()`；`bake_async` 返回的 StopSource 用它取消 |
+| `resource.Type.FILTER/GENERATOR/...` | 用途概念在 `resource.Usage`（非 Type）；资源用 `res.usages()` 表达用途，配 `r.Usage.*` 筛选 |
+| `ChannelType.AmbientOcclusion` | 真实成员名是 `AO`；枚举映射必须用 getattr 防御式构建，单个成员缺失不崩整函数 |
+| `get_parameters()` 返回 PropertyValue | 实际返回原生值（int/float/str）；`_serialize_property_value` 勿误调 `.value()` |
 
 ---
 
@@ -62,9 +71,9 @@ sp-mcp/
 │   └── sp_bridge/              # 装入 Painter 的嵌入式插件
 │       ├── __init__.py             # 插件入口：start_plugin / close_plugin
 │       ├── bridge.py               # HTTP server（独立线程）+ QTimer 轮询队列调度
-│       └── handlers.py             # substance_painter.* API 的实际调用（_REGISTRY: 92 方法）
+│       └── handlers.py             # substance_painter.* API 的实际调用（_REGISTRY: 94 方法）
 ├── server/                    # 外部 MCP 进程（venv 运行）
-│   ├── sp_mcp.py                   # FastMCP server，暴露 92 个 MCP tools
+│   ├── sp_mcp.py                   # FastMCP server，暴露 94 个 MCP tools
 │   ├── client.py                   # 对 plugin HTTP bridge 的封装（requests）
 │   └── pidlock.py                  # 单实例 PID 锁（防止重复启动 server）
 ├── tests/
@@ -272,8 +281,11 @@ sp_end_batch()
 
 通过 `sp.js.evaluate()` 调用 SP 的 `alg` JS API，补上 Python API 缺失的功能。
 
-**`sp_bake_mesh_maps(texture_set_name)`** — 烘焙 mesh maps（AO/Curvature/Normal 等）。
-需要 SP 10.0+。通过 `alg.baking.bake()` 实现。需要完整参数控制时用 Phase 16 的原生烘焙 API。
+**`sp_bake_mesh_maps(texture_set_name)`** — **异步**烘焙 mesh maps（AO/Curvature/Normal 等）。
+实机（SP 10.0.1）改用 `baking.bake_async()`：立即返回（phase=pending），不阻塞 HTTP。
+⚠ 返回后烘焙仍在 SP 内进行，**勿因延迟/超时重试**（会重复触发烘焙）——
+用 `sp_get_bake_status` 轮询，需中止用 `sp_cancel_bake`。
+需要完整参数控制时用 Phase 16 的原生烘焙 API。
 
 **`sp_add_texture_set_channel(texture_set_name, channel_id, channel_format, channel_label)`** — 给纹理集添加通道。
 `channel_format`: 传给 `alg.texturesets.addChannel()` 的格式字符串，默认 `"RGB16F"`，其它可选 `"sRGB8"` / `"L8"` / `"L16"` / `"RGBA16F"` 等。通过 `alg.texturesets.addChannel()` 实现。
@@ -412,11 +424,16 @@ sp_cu_unlock()                             → 操作完毕，隐藏警示条
 
 **`sp_get_baking_parameters(texture_set_name)`** — 读取 common + 各 baker + 曲率方法 + 启用项。
 
-**`sp_set_baking_parameters(texture_set_name, common?, baker?)`** — 设置烘焙参数。
+**`sp_set_baking_parameters(texture_set_name, common?, baker?)`** — 设置烘焙参数。传了参数却全未匹配时报错（不静默 ok）。
 
 **`sp_bake_texture_set(texture_set_name)`** — 异步启动烘焙。
 
-**`sp_get_baking_state(texture_set_name)`** / **`sp_set_baking_state(texture_set_name, ...)`** — 启用状态/曲率方法/bakers/UV tiles 读写。
+**`sp_get_baking_state(texture_set_name)`** / **`sp_set_baking_state(texture_set_name, ...)`** — 启用状态/曲率方法/bakers/UV tiles 读写。`set_baking_state` 全 None 时报错（不假装成功）。
+
+**`sp_get_bake_status(texture_set_name)`** — 轮询 `sp_bake_mesh_maps` 的异步状态：
+返回 phase（pending/running/done/unknown）、progress（0..1）、status（done 时为 Success/Cancel/Fail）、elapsed。**烘焙启动后用它确认完成，勿盲目重试。**
+
+**`sp_cancel_bake(texture_set_name)`** — 取消进行中的异步烘焙，基于 `StopSource.request_stop()`（实机验证 SP 10.0.1 的取消方法）。
 
 ### Phase 17 — 项目生命周期 + 元数据
 
@@ -430,7 +447,7 @@ sp_cu_unlock()                             → 操作完毕，隐藏警示条
 
 **`sp_list_resources_by_usage(usage, search?)`** — 按用途列资源。usage: `filter`/`generator`/`substance`/`smart_material`/`smart_mask`/`texture`/`environment`/`export_preset`。
 
-> **工具规模：** MCP tools 总计 92 个，与 `sp_mcp.py` 的 `@mcp.tool()` 数和 `handlers.py` 的 `_REGISTRY` 条目一一对应。新增工具要三处同步：`sp_mcp.py` + `handlers.py` + `.opencode/skills`。
+> **工具规模：** MCP tools 总计 94 个，与 `sp_mcp.py` 的 `@mcp.tool()` 数和 `handlers.py` 的 `_REGISTRY` 条目一一对应。新增工具要三处同步：`sp_mcp.py` + `handlers.py` + `.opencode/skills`。
 
 ---
 
