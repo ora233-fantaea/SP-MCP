@@ -1775,9 +1775,14 @@ def list_export_presets() -> list:
 
 
 def get_iray_params() -> dict:
-    """读取当前 Iray 渲染参数设置。"""
+    """读取当前 Iray 渲染参数设置。
+
+    实机（SP 10.0.1）已验证：width/height 是 QSpinBox；maxSamples/maxTime
+    在同名容器里、是名为 "value" 的 QLineEdit（不是 SpinBox）。此前只扫
+    QSpinBox，导致最重要的采样数/时间两参数读不到。
+    """
     import substance_painter.ui
-    from PySide2.QtWidgets import QDockWidget, QSpinBox
+    from PySide2.QtWidgets import QDockWidget, QWidget, QLineEdit, QSpinBox
 
     win = substance_painter.ui.get_main_window()
     panel = None
@@ -1790,10 +1795,34 @@ def get_iray_params() -> dict:
         return {"error": "Iray panel not found"}
 
     params = {}
+    # width / height 是 QSpinBox
     for sb in panel.findChildren(QSpinBox):
         name = sb.objectName()
         if name:
             params[name] = sb.value()
+
+    # maxSamples / maxTime 在同名容器里，是名为 "value" 的 QLineEdit
+    def _read_line_edit(container_name):
+        container = panel.findChild(QWidget, container_name)
+        if container:
+            le = container.findChild(QLineEdit, "value")
+            if le:
+                txt = le.text()
+                try:
+                    return int(txt)
+                except ValueError:
+                    try:
+                        return float(txt)
+                    except ValueError:
+                        return txt
+        return None
+
+    ms = _read_line_edit("maxSamples")
+    mt = _read_line_edit("maxTime")
+    if ms is not None:
+        params["max_samples"] = ms
+    if mt is not None:
+        params["max_time"] = mt
 
     return {"params": params}
 

@@ -1058,3 +1058,21 @@ class TestExportTexturesRealApi:
                                        output_dir="/tmp/export")
         assert out["count"] > 0
 
+
+class TestGetIrayParamsReadsAll:
+    """实机回归：maxSamples/maxTime 是 QLineEdit（不是 QSpinBox），旧 get_iray_params
+    只扫 QSpinBox 导致采样数/时间两参数读不到。守住读全四项。"""
+
+    def test_reads_max_samples_and_time(self, fresh_layer_stack):
+        handlers.set_iray_params(max_samples=77, max_time=33)
+        out = handlers.get_iray_params()
+        params = out["params"]
+        # 这两项此前会缺失 —— 必须读到
+        assert params["max_samples"] == 77
+        assert params["max_time"] == 33
+
+    def test_reads_width_height(self, fresh_layer_stack):
+        out = handlers.get_iray_params()
+        params = out["params"]
+        assert "width" in params and "height" in params
+
