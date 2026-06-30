@@ -1100,15 +1100,155 @@ def end_batch() -> dict:
 
 # ── Phase 9: JS API 集成 ────────────────────────────────────────────────────
 
+# 异步烘焙状态：按纹理集名记录一次 bake_async 的运行情况。
+# 配合 BakingProcessEnded / BakingProcessProgress 事件更新，使客户端能轮询
+# 真实状态而非盲目重试 —— 解决旧实现同步 js.evaluate 在超时后仍阻塞、被
+# 误判失败而重复触发的根本风险。
+# 状态机：pending(已发起) → running(收到进度) → done(status=Success/Cancel/Fail)
+_bake_state: dict = {}   # {texture_set_name: {"phase","progress","status","start","end","error"}}
+_bake_stop_sources: dict = {}  # {texture_set_name: StopSource}（可取消）
+_bake_events_registered = False
+
+
+def _ensure_bake_events_registered() -> None:
+    """一次性注册 BakingProcessEnded / Progress 事件回调（幂等）。"""
+    global _bake_events_registered
+    if _bake_events_registered:
+        return
+    try:
+        import substance_painter.event as ev
+        import time as _time
+
+        def _on_ended(event):
+            # event.status 是 BakingStatus 枚举（pybind11），用 __members__ 取名。
+            status = _enum_name(getattr(event, "status", None))
+            # 找到当前 pending/running 的纹理集更新之（事件不直接带纹理集名）
+            for ts_name, st in _bake_state.items():
+                if st.get("phase") in ("pending", "running"):
+                    st["phase"] = "done"
+                    st["status"] = status
+                    st["end"] = _time.time()
+            _log_info(f"bake ended: status={status}")
+
+        def _on_progress(event):
+            prog = getattr(event, "progress", None)
+            for ts_name, st in _bake_state.items():
+                if st.get("phase") == "pending":
+                    st["phase"] = "running"
+                if st.get("phase") == "running":
+                    st["progress"] = prog
+
+        ev.DISPATCHER.connect_strong(ev.BakingProcessEnded, _on_ended)
+        ev.DISPATCHER.connect_strong(ev.BakingProcessProgress, _on_progress)
+        _bake_events_registered = True
+    except Exception:
+        # 事件注册失败不应阻塞烘焙本身，只是状态查询退化为「未知」。
+        _log_warning("bake event registration failed — "
+                     + _traceback.format_exc())
+
+
+def _enum_name(val) -> str:
+    """把 pybind11 枚举值转成名字（如 BakingStatus.Success → 'Success'）。"""
+    name = getattr(val, "name", None)
+    if name:
+        return name
+    try:
+        # 兼容测试 mock 的可迭代枚举
+        for k, v in type(val).__members__.items():
+            if v is val or v == val:
+                return k
+    except Exception:
+        pass
+    return str(val)
+
+
 def bake_mesh_maps(texture_set_name: str) -> dict:
-    """通过 JS API 烘焙指定纹理集的 mesh maps。"""
-    import json
+    """异步烘焙指定纹理集的 mesh maps（AO/Curvature/Normal 等）。
+
+    实机（SP 10.0.1）已验证：烘焙应走 baking.bake_async（异步，立即返回），
+    而非旧的同步 js.evaluate("alg.baking.bake()")。同步调用会阻塞 HTTP 直到
+    烘焙完成，超时后 SP 内仍继续执行、客户端误判失败而重复触发 —— 这是
+    高危的重复烘焙风险。改用 bake_async 后立即返回，用 get_bake_status 轮询。
+
+    ⚠ 不要在收到本工具返回后立即重试：烘焙已在 SP 内异步进行。若需确认是否
+      完成，调用 get_bake_status(texture_set_name)。
+    """
     if not texture_set_name:
         raise ValueError("texture_set_name must not be empty")
-    import substance_painter.js as js
-    _ts = json.dumps(texture_set_name)
-    js.evaluate(f"alg.baking.bake({_ts})")
-    return {"ok": True, "texture_set": texture_set_name}
+    import substance_painter.baking as baking
+    import substance_painter.textureset as ts_mod
+    import time as _time
+
+    texture_set = ts_mod.TextureSet.from_name(texture_set_name)
+    _ensure_bake_events_registered()
+
+    stop_source = baking.bake_async(texture_set)
+    _bake_stop_sources[texture_set_name] = stop_source
+    _bake_state[texture_set_name] = {
+        "phase": "pending", "progress": None,
+        "status": None, "start": _time.time(), "end": None, "error": None,
+    }
+    _log_info(f"bake_mesh_maps: async bake started for {texture_set_name!r}")
+    return {"ok": True, "texture_set": texture_set_name,
+            "phase": "pending",
+            "message": "Baking started asynchronously. "
+                       "Poll with get_bake_status() to confirm completion; "
+                       "do NOT retry on timeout — baking is still running in SP."}
+
+
+def get_bake_status(texture_set_name: str) -> dict:
+    """查询一次 bake_mesh_maps 异步烘焙的运行状态。
+
+    返回 phase（pending/running/done/unknown）、progress（0..1 或 null）、
+    status（done 时为 Success/Cancel/Fail）、elapsed 秒。用于在烘焙启动后
+    轮询确认是否真正完成，避免盲目重试。
+    """
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    st = _bake_state.get(texture_set_name)
+    if st is None:
+        return {"texture_set": texture_set_name, "phase": "unknown",
+                "message": "No bake recorded for this texture set."}
+    import time as _time
+    end = st.get("end") or _time.time()
+    return {
+        "texture_set": texture_set_name,
+        "phase": st.get("phase"),
+        "progress": st.get("progress"),
+        "status": st.get("status"),
+        "elapsed": round(end - st.get("start", end), 1),
+    }
+
+
+def cancel_bake(texture_set_name: str) -> dict:
+    """取消一次进行中的异步烘焙（基于 bake_async 返回的 StopSource）。"""
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    stop = _bake_stop_sources.get(texture_set_name)
+    if stop is None:
+        return {"ok": False, "error": "No active bake to cancel for this texture set."}
+    # 实机（SP 10.0.1）已验证：StopSource 的取消方法是 request_stop()。
+    # 退路覆盖 cancel/stop 以兼容其它版本/mock。
+    stopped = False
+    for attr in ("request_stop", "cancel", "stop"):
+        fn = getattr(stop, attr, None)
+        if callable(fn):
+            try:
+                fn()
+                stopped = True
+                break
+            except Exception:
+                _log_warning(f"cancel_bake: {attr}() failed — "
+                             + _traceback.format_exc())
+    if not stopped:
+        return {"ok": False, "error": "cancel not supported on this StopSource"}
+    st = _bake_state.get(texture_set_name)
+    if st is not None and st.get("phase") in ("pending", "running"):
+        st["phase"] = "done"
+        st["status"] = "Cancel"
+        import time as _time
+        st["end"] = _time.time()
+    return {"ok": True, "texture_set": texture_set_name, "status": "Cancel"}
 
 
 def add_texture_set_channel(texture_set_name: str, channel_id: str,
@@ -3231,6 +3371,8 @@ _REGISTRY: dict = {
     "bake_texture_set":         bake_texture_set,
     "get_baking_state":         get_baking_state,
     "set_baking_state":         set_baking_state,
+    "get_bake_status":          get_bake_status,
+    "cancel_bake":              cancel_bake,
     # Phase 17 — project lifecycle
     "create_project":           create_project,
     "open_project":             open_project,

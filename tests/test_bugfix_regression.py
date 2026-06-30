@@ -974,6 +974,67 @@ class TestSetEnvironmentUsageFiltered:
         assert captured["rid"] != "id://decoy-brush"
 
 
+class TestBakeMeshMapsAsync:
+    """bake_mesh_maps 改异步后必须维持的不变量：
+    1. 立即返回（phase=pending），不阻塞；
+    2. BakingProcessProgress 事件把 phase 推到 running 并记录 progress；
+    3. BakingProcessEnded 事件把 phase 推到 done 并记录 status；
+    4. cancel_bake 可中止 pending/running 的烘焙；
+    5. get_bake_status 对无记录的纹理集返回 unknown。
+
+    这组测试守住「异步 + 事件驱动状态机」，防止回退到同步 js.evaluate
+    （后者会在超时后仍阻塞、被误判失败而重复触发）。
+    """
+
+    def _trigger(self, evt_name, **attrs):
+        """模拟一次事件：构造带 attrs 的 event，调用所有已注册回调。"""
+        import substance_painter.event as ev
+        import types as _t
+        e = _t.SimpleNamespace(**attrs)
+        for cb in list(ev.DISPATCHER._callbacks.get(evt_name, [])):
+            cb(e)
+
+    def test_starts_pending_and_not_blocking(self, fresh_layer_stack):
+        out = handlers.bake_mesh_maps("Default")
+        assert out["ok"] is True
+        assert out["phase"] == "pending"
+        st = handlers.get_bake_status("Default")
+        assert st["phase"] == "pending"
+
+    def test_progress_moves_to_running(self, fresh_layer_stack):
+        handlers.bake_mesh_maps("Default")
+        self._trigger("BakingProcessProgress", progress=0.42)
+        st = handlers.get_bake_status("Default")
+        assert st["phase"] == "running"
+        assert st["progress"] == 0.42
+
+    def test_ended_records_status(self, fresh_layer_stack):
+        handlers.bake_mesh_maps("Default")
+        self._trigger("BakingProcessProgress", progress=0.5)
+        import substance_painter.baking as bak
+        self._trigger("BakingProcessEnded", status=bak.BakingStatus.Success)
+        st = handlers.get_bake_status("Default")
+        assert st["phase"] == "done"
+        assert st["status"] == "Success"
+
+    def test_cancel_marks_cancel(self, fresh_layer_stack):
+        handlers.bake_mesh_maps("Default")
+        out = handlers.cancel_bake("Default")
+        assert out["ok"] is True
+        assert out["status"] == "Cancel"
+        st = handlers.get_bake_status("Default")
+        assert st["phase"] == "done"
+        assert st["status"] == "Cancel"
+
+    def test_status_unknown_for_unbaked(self, fresh_layer_stack):
+        st = handlers.get_bake_status("NeverBaked")
+        assert st["phase"] == "unknown"
+
+    def test_cancel_unknown_returns_error(self, fresh_layer_stack):
+        out = handlers.cancel_bake("NeverBaked")
+        assert out["ok"] is False
+
+
 class TestExportTexturesRealApi:
     """实机回归：export_project_textures 接受 JSON dict（无 ExportConfig 类），
     返回 .textures 为 {stack: [files]} dict。守住 handler 用真实 API。"""

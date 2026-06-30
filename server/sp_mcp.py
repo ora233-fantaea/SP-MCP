@@ -612,14 +612,41 @@ def sp_end_batch() -> dict:
 @mcp.tool()
 def sp_bake_mesh_maps(texture_set_name: str) -> dict:
     """
-    烘焙指定纹理集的 mesh maps（AO/Curvature/Normal 等）。
-    需要 SP 10.0+。通过 `js.evaluate("alg.baking.bake()")` 实现。
+    异步烘焙指定纹理集的 mesh maps（AO/Curvature/Normal 等）。
+    需要 SP 10.0+。底层用 baking.bake_async —— 立即返回，不阻塞。
+
+    ⚠ 本工具返回后烘焙仍在 SP 内异步进行，**不要因超时/延迟而重试**，
+      否则会重复触发烘焙。用 sp_get_bake_status(texture_set_name) 轮询
+      确认完成（phase=done、status=Success）。如需中止用 sp_cancel_bake。
 
     texture_set_name: 纹理集名称（从 sp_get_texture_sets 获取）
     """
     if not texture_set_name:
         raise ValueError("texture_set_name must not be empty")
     return sp.call("bake_mesh_maps", {"texture_set_name": texture_set_name})
+
+
+@mcp.tool()
+def sp_get_bake_status(texture_set_name: str) -> dict:
+    """
+    查询一次 sp_bake_mesh_maps 异步烘焙的运行状态。
+
+    返回 phase（pending=已发起 / running=收到进度 / done=已结束 /
+    unknown=无记录）、progress（0..1）、status（done 时为
+    Success/Cancel/Fail）、elapsed（秒）。
+    烘焙启动后用它轮询，**phase 未到 done 前不要重试 sp_bake_mesh_maps**。
+    """
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    return sp.call("get_bake_status", {"texture_set_name": texture_set_name})
+
+
+@mcp.tool()
+def sp_cancel_bake(texture_set_name: str) -> dict:
+    """取消一次进行中的异步烘焙（基于 bake_async 的 StopSource）。"""
+    if not texture_set_name:
+        raise ValueError("texture_set_name must not be empty")
+    return sp.call("cancel_bake", {"texture_set_name": texture_set_name})
 
 
 @mcp.tool()

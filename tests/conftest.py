@@ -1805,9 +1805,13 @@ def _make_sp_mock():
             self._enabled_uv_tiles = [(t.u, t.v) for t in tiles]
 
     def _bake_async(ts):
-        return types.SimpleNamespace()
+        # StopSource：真实 SP 10.0.1 的取消方法是 request_stop()。mock 同步，
+        # 退路 cancel() 保留兼容。handler 会按 request_stop→cancel→stop 探测。
+        return types.SimpleNamespace(request_stop=lambda: None,
+                                     cancel=lambda: None)
     def _bake_selected_async():
-        return types.SimpleNamespace()
+        return types.SimpleNamespace(request_stop=lambda: None,
+                                     cancel=lambda: None)
 
     baking_mod.BakingParameters = MockBakingParameters
     baking_mod.BakingStatus = BakingStatus
@@ -1935,15 +1939,21 @@ def _make_sp_mock():
 
     class MockDispatcher:
         def __init__(self):
-            self._callbacks = {}
+            self._callbacks = {}  # {event_cls_name: [callback,...]}
         def connect(self, event_cls, callback):
-            pass
+            self._callbacks.setdefault(event_cls.__name__, []).append(callback)
         def connect_strong(self, event_cls, callback):
-            pass
+            self._callbacks.setdefault(event_cls.__name__, []).append(callback)
         def disconnect(self, event_cls, callback):
-            pass
-        def _trigger(self, evt):
-            pass
+            lst = self._callbacks.get(event_cls.__name__, [])
+            if callback in lst:
+                lst.remove(callback)
+        def _trigger(self, evt_cls):
+            """测试辅助：模拟某事件发生，触发已注册回调。"""
+            name = evt_cls if isinstance(evt_cls, str) else getattr(evt_cls, "__name__", str(evt_cls))
+            ev = types.SimpleNamespace()
+            for cb in list(self._callbacks.get(name, [])):
+                cb(ev)
 
     event_mod.DISPATCHER = MockDispatcher()
     event_mod.Dispatcher = MockDispatcher
