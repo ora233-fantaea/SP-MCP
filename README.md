@@ -233,6 +233,10 @@ mcp_servers:
 
 > 通过 Windows API 实现 mini Computer Use，供视觉模型通过截图→坐标映射→鼠标点击/键盘输入驱动 SP UI。
 > `sp_window_focus()` 会在 SP 窗口顶部显示红色 "MCP Control Active" 警示条，操作结束后用 `sp_cu_unlock()` 清除。
+>
+> ⚠️ **安全警告**：`sp_mouse_*` / `sp_key_send` / `sp_shortcut` 会**真实操控你的物理鼠标和键盘**。
+> 调用这些工具时，请勿同时使用电脑做其他工作（光标会被抢占），并确保 SP 窗口处于前台（先调 `sp_window_focus`）。
+> 这些操作可能误触其他窗口或对话框——仅在你能随时抢回控制权时使用。
 
 | Tool | 说明 |
 |------|------|
