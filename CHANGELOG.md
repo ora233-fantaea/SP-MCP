@@ -10,6 +10,7 @@
 本次版本的核心是**对 92 个工具中的 80 个（除 computer-use 外）逐个在真实
 Substance Painter 10.0.1 上调用验证**，修复了 7 个此前被 mock 测试自我掩盖的
 真 bug，并把 bake 从同步阻塞改为异步架构。这是项目首次达到"实机验证可用"。
+完整过程见 [PHASES.md Phase 18](./PHASES.md)。
 
 ### Added
 
@@ -17,6 +18,7 @@ Substance Painter 10.0.1 上调用验证**，修复了 7 个此前被 mock 测�
   （phase/progress/status/elapsed），供客户端确认完成而非盲目重试。
 - **`sp_cancel_bake`** — 取消进行中的异步烘焙（基于 `StopSource.request_stop()`）。
 - 三个文档（README/AGENTS/PHASES）补全 Phase 18 实机审计记录与 API 事实表。
+- 新增 [CHANGELOG.md](./CHANGELOG.md)；README 顶部加 version/tools/tests 徽章。
 
 ### Changed
 
@@ -27,6 +29,10 @@ Substance Painter 10.0.1 上调用验证**，修复了 7 个此前被 mock 测�
   超时误报。docstring 写入"勿盲目重试、用 get_bake_status 轮询"提醒。
 - `sp_set_baking_parameters` / `sp_set_baking_state` 加固：传了参数却全未匹配、
   或全部可改项为 None 时，明确报错而非静默谎报 ok。
+- `sp_set_environment` 只在 `Usage.ENVIRONMENT` 资源里匹配，避免误选同名非环境资源。
+- mcp.json 补全到 94 工具，version 0.5.0 → 0.6.0。
+- README 加 computer-use 安全警告（mouse_*/key_send/sp_shortcut 会真实操控
+  物理鼠标键盘，调用时勿同时用电脑、先 window_focus）。
 
 ### Fixed（实机暴露的 7 个真 bug）
 
@@ -57,31 +63,136 @@ Substance Painter 10.0.1 上调用验证**，修复了 7 个此前被 mock 测�
 
 ---
 
-## [0.5.0] — 2026-06 — 功能补全（92 工具）
+## [0.5.0] — 2026-06-15 — 功能补全（92 工具）
 
-### Added
+### Added — Tier 1 三大功能块（`f633aeb`）
 
-- **Tier 1 三大功能块**：效果节点（Filter/Generator/Levels/CompareMask/
-  ColorSelection/Anchor）、烘焙 API（Python 原生参数/状态/异步执行）、
-  项目生命周期（create/open/close/reload_mesh + 元数据）。
-- `sp_shortcut` — 26 个预定义 SP 快捷键封装。
-- 程序化源参数控制（SourceSubstance）：get/set parameters、presets、outputs。
+- **效果节点（Phase 15）**：Filter / Generator / Levels / CompareMask /
+  ColorSelection / Anchor 六类效果插入，配 `get_effect_parameters` /
+  `get_selected_nodes` / `set_selected_nodes`。
+- **烘焙 API（Phase 16）**：Python 原生 `substance_painter.baking` 参数/状态/
+  异步执行，替代 JS `alg.baking.bake()`。含 `get/set_baking_parameters`、
+  `bake_texture_set`、`get/set_baking_state`。
+- **项目生命周期（Phase 17）**：`create_project` / `open_project` /
+  `close_project` / `reload_mesh` + 项目级持久化元数据读写 +
+  `list_resources_by_usage`。
+- `sp_shortcut`（`80f299a`）— 26 个预定义 SP 快捷键封装。
+- 程序化源参数控制（Phase 13b，SourceSubstance）：get/set parameters、
+  presets、outputs 共 7 个工具。
 - 相机与显示增强：camera / tone_mapping / color_lut / scene_bounding_box。
-- Computer Use（Phase 14）：window 截图 + 鼠标/键盘控制 + CU 警示条。
-- 16 个项目专属 skill（LLM 操作参考）。
-- 自动 batch：每个图层修改自动包裹 ScopedModification，1 次调用 = 1 条 undo。
-- PID 文件锁防止 MCP zombie 进程。
 
 ### Changed
 
-- 插件文件重构进 `plugin/sp_bridge/` 子目录。
+- 插件文件重构进 `plugin/sp_bridge/` 子目录（`8dd954b`，Phase 12）。
 - 跨线程调度统一走 `_task_queue` + QTimer 方案（`schedule_on_ui_thread` 在
   SP 10.x 不存在）。
-- 用 SP 原生 QUndoStack 实现 undo/redo（非外置栈）。
+- 用 SP 原生 QUndoStack 实现 undo/redo（`37a44ac`，Phase 10/11，非外置栈）。
+- 每个 layer API 自动包裹 `ScopedModification`，1 次调用 = 1 条 undo（Phase 12）。
+- 移除已废弃的 QML 插件，全部功能走 Python bridge（`1d7d807`）。
+- 扩展 .gitignore（venv / logs / IDE / .claude/ / .spp 等，`0b5f222`）。
+
+### Fixed
+
+- `set_camera` 读取当前状态、保留未指定参数、支持 target 旋转（`f134884`）。
+- fastmcp banner 在 stdio 模式污染 stdout（`ed39d77`）。
+- Phase 6/7 工具适配 SP 10.x API 限制（`d86c6bc`）。
 
 ---
 
-## [0.4.0] 及更早
+## [0.4.0] — 2026-06-12 — Computer Use（Phase 14）
 
-核心图层工具、视觉反馈回路（截图迭代）、Smart Material 创作工具、
-Skills + Commands 补全。详见 git 历史。
+### Added（`ebcbb22`）
+
+mini Computer Use 能力，供 LLM 视觉模型驱动 SP UI：
+
+- 窗口截图与信息：`window_info` / `window_grab`（全窗口或区域）/ `window_focus`
+  （聚焦 + 红色警示条）。
+- 鼠标控制：`mouse_move` / `mouse_click`（左/右/中，单击/双击）/ `mouse_scroll`
+  / `mouse_drag`。
+- 键盘控制：`key_send`（单键/组合键/打字，支持 enter/tab/f1-f12/方向键等命名键）。
+- CU 警示条：`cu_unlock` / `cu_banner_text` / `cu_warning`。
+
+### Fixed
+
+- `alg.ui.clickButton` 在 SP 10.0.1 有 `findChild` 内部 bug，Computer Use 的
+  鼠标点击绕过此限制。
+
+---
+
+## [0.3.0] — 2026-06-08 — 稳定性与防僵尸
+
+### Added
+
+- PID 文件锁防止 MCP zombie 进程（`19d2b4b`）。
+
+### Fixed
+
+- timeout 60s 作为真实修复（`5b60350`，此前误改 banner）。
+
+---
+
+## [0.2.0] — 2026-06-06 — 图层高级操作 + Skills
+
+### Added
+
+- **四功能复现（Phase 13，`8b6941b`）**：用 delete+re-insert 工作流实现
+  SP 10.x 缺 Python API 的 `move_layer` / `group_layers` / `ungroup_layer` /
+  `frame_mesh`。发现 `get_node_by_uid` / `get_parent` / `get_scene_bounding_box`
+  等真实 API。
+- **Skills 扩展（`f7c2f4a`）**：从 8 个扩到 13 个，形成完整 SP-MCP skill 系统。
+- 新增 sp-camera / sp-texture-set / sp-project skills，sp-layer-ops 加入
+  "先读后改"原则（`de00499`）。
+
+### Changed
+
+- README 完善：安装路径、缺失工具、Antigravity CLI 配置（`2774729`）。
+- README 移除 SP2VTF 集成章节（`a87bcae`）。
+
+### Fixed
+
+- README 安装路径修正、补齐缺失工具说明（`2774729`、`d2b8d0b`）。
+
+---
+
+## [0.1.0] — 2026-06-03 — 初始版本
+
+### Added
+
+- SP MCP bridge + server 初始实现（`5f19d07`）：HTTP bridge（端口 27182）+
+  FastMCP server + QTimer 跨线程调度。
+- 核心图层工具（Phase 2）：`get_layer_stack` / `get_texture_sets` /
+  `add_fill_layer` / `set_layer_property` 等。
+- 视觉反馈回路（Phase 3）：`capture_viewport`（quick/render 两种模式），
+  建立"截图→评估→修改→截图"迭代闭环。
+- Smart Material 创作工具（Phase 4）：`apply_smart_material` / `add_smart_mask` /
+  `list_shelf_materials` + Iray 渲染（`set_iray_params` / `start_iray_render` /
+  `check_iray_render`）。
+- 图层基础 + 通道 + Undo（Phase 6/7/8）：delete/group/paint layer、undo/redo、
+  set/get layer channel、duplicate/move/group/ungroup、TextureSet 管理、
+  batch 操作。
+- Skills + Commands 补全（Phase 5，`0993c62`）：sp-layer-ops /
+  sp-creative-workflow / sp-export-pipeline / sp-debug 四个 skill +
+  check / paint / export 命令。
+- 初始 README、AGENTS.md、PHASES.md（`5442828` / `6915f5d`）。
+
+### Known limitations（初始）
+
+- `schedule_on_ui_thread` 在 SP 10.x 不存在 → 用 QTimer 轮询队列。
+- `substance_painter.layers` 不存在 → 用 `substance_painter.layerstack`。
+- `is_enabled` 不存在 → 用 `is_visible`。
+- Layer id 在 Painter 重启后变化，不跨 session 缓存。
+
+---
+
+## 版本演进一览
+
+| 版本 | 日期 | 工具数 | 里程碑 |
+|------|------|--------|--------|
+| 0.1.0 | 2026-06-03 | ~23 | 核心 bridge + 图层工具 + 视觉反馈回路 |
+| 0.2.0 | 2026-06-06 | ~30 | 图层高级操作（move/group/ungroup/frame）+ skills |
+| 0.3.0 | 2026-06-08 | ~30 | 稳定性 + PID 锁 |
+| 0.4.0 | 2026-06-12 | ~42 | Computer Use（窗口截图 + 鼠标键盘控制） |
+| 0.5.0 | 2026-06-15 | 92 | 效果节点 + 烘焙 + 项目生命周期 |
+| 0.6.0 | 2026-06-30 | 94 | 实机全工具审计 + bake 异步化 + 7 bug 修复 |
+
+> 完整提交历史见 `git log`。开发过程与阶段任务详见 [PHASES.md](./PHASES.md)。
