@@ -58,26 +58,50 @@ graph LR
 *   **Substance 3D Painter** 10.0.1+
 *   **Python** 3.10+
 *   **依赖库**: `fastmcp` (0.9+), `requests` (2.31+)
+*   **操作系统**: Windows（Computer Use 工具依赖 Windows API；其余工具跨平台可用）
 
-### 1. 部署 Painter 插件
+### 1. Clone 仓库到本地
 
-将 `plugin/sp_bridge/` 文件夹复制到以下路径：
 ```bash
-%USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\
+git clone https://github.com/ora233-fantaea/SP-MCP.git
+cd SP-MCP
 ```
 
-> **成功标志**：安装完成后启动 Painter，Python Console 会显示：
+> 后续更新只需 `git pull`。下面的步骤都基于 clone 后的仓库根目录（下文记作 `<SP-MCP>`）。
+
+### 2. 部署 Painter 插件
+
+SP 内嵌插件位于仓库的 `plugin/sp_bridge/`，需要让 Painter 能加载到它。两种方式任选其一：
+
+**方式 A — 复制（简单）**：把 `plugin/sp_bridge/` 文件夹复制到 Painter 的插件目录：
+```
+%USERPROFILE%\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\sp_bridge\
+```
+> ⚠️ 用这种方式，每次 `git pull` 更新后要重新复制一遍。
+
+**方式 B — 符号链接（推荐，便于更新）**：在 Painter 插件目录建一个指向仓库的符号链接，
+以后 `git pull` 即自动生效，无需再复制。以管理员身份打开 PowerShell：
+```powershell
+$plugins = "$env:USERPROFILE\Documents\Adobe\Adobe Substance 3D Painter\python\plugins"
+New-Item -ItemType SymbolicLink -Path "$plugins\sp_bridge" -Target "<SP-MCP>\plugin\sp_bridge"
+```
+
+> **成功标志**：启动 Painter，Python Console 显示：
 > `[INFO] sp_bridge: SP Bridge started on port 27182`
 
-### 2. 安装 Python 依赖
+### 3. 安装 Python 依赖
 
+在仓库根目录创建虚拟环境并安装依赖（MCP server 跑在这个 venv 里）：
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
 pip install fastmcp requests
 ```
 
-### 3. 配置 LLM 客户端
+### 4. 配置 LLM 客户端
+
+把仓库内的 `server/sp_mcp.py` 注册为 MCP server。`<Python路径>` 填上一步 venv 里的
+python（如 `<SP-MCP>\.venv\Scripts\python.exe`），`<SP-MCP>` 填仓库绝对路径。
 
 <details>
 <summary><b>OpenCode</b></summary>
@@ -88,7 +112,7 @@ pip install fastmcp requests
   "mcp": {
     "substance-painter": {
       "type": "local",
-      "command": ["<Python路径>", "<仓库绝对路径>/server/sp_mcp.py"],
+      "command": ["<SP-MCP>\\.venv\\Scripts\\python.exe", "<SP-MCP>\\server\\sp_mcp.py"],
       "enabled": true,
       "timeout": 30000
     }
@@ -104,8 +128,8 @@ pip install fastmcp requests
 {
   "mcpServers": {
     "substance-painter": {
-      "command": "<Python路径>",
-      "args": ["<仓库绝对路径>/server/sp_mcp.py"]
+      "command": "<SP-MCP>\\.venv\\Scripts\\python.exe",
+      "args": ["<SP-MCP>\\server\\sp_mcp.py"]
     }
   }
 }
@@ -119,17 +143,20 @@ pip install fastmcp requests
 ```yaml
 mcp_servers:
   substance-painter:
-    command: "<Python路径>"
-    args: ["<仓库绝对路径>/server/sp_mcp.py"]
+    command: "<SP-MCP>\\.venv\\Scripts\\python.exe"
+    args: ["<SP-MCP>\\server\\sp_mcp.py"]
 ```
 </details>
 
-### 4. 启动使用
+### 5. 启动使用
 
 1. 启动 Painter，打开一个项目
-2. 确认 Console 显示 Bridge started
-3. 启动 LLM 客户端
+2. 确认 Console 显示 `SP Bridge started on port 27182`
+3. 启动 LLM 客户端（会自动拉起 MCP server）
 4. 💬 对话中直接使用：*"帮我看看当前 Painter 的图层结构"*
+
+> 💡 更新：以后只需 `git pull`（方式 B）或重新复制插件（方式 A），无需重装依赖。
+
 
 ---
 
