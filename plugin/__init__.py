@@ -1,0 +1,1 @@
+"""Substance Painter plugin package."""

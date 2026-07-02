@@ -7,9 +7,10 @@
 
 ## [0.6.0] — 2026-06-30 — 实机全工具审计
 
-本次版本的核心是**对 92 个工具中的 80 个（除 computer-use 外）逐个在真实
-Substance Painter 10.0.1 上调用验证**，修复了 7 个此前被 mock 测试自我掩盖的
-真 bug，并把 bake 从同步阻塞改为异步架构。这是项目首次达到"实机验证可用"。
+本次版本的核心是**对 80 个非 Computer Use 工具逐个在真实 Substance Painter
+10.0.1 上调用验证**，并对 12 个 Computer Use 工具单独完成实机验证。审计修复了
+7 个此前被 mock 测试自我掩盖的真 bug，并把 bake 从同步阻塞改为异步架构。
+这是项目首次达到"实机验证可用"。
 完整过程见 [PHASES.md Phase 18](./PHASES.md)。
 
 ### Added
@@ -19,6 +20,8 @@ Substance Painter 10.0.1 上调用验证**，修复了 7 个此前被 mock 测�
 - **`sp_cancel_bake`** — 取消进行中的异步烘焙（基于 `StopSource.request_stop()`）。
 - 三个文档（README/AGENTS/PHASES）补全 Phase 18 实机审计记录与 API 事实表。
 - 新增 [CHANGELOG.md](./CHANGELOG.md)；README 顶部加 version/tools/tests 徽章。
+- `plugin/__init__.py` 明确声明插件包，pytest 配置加入仓库根目录到 import path，
+  让本地测试入口更可复现。
 
 ### Changed
 
@@ -31,6 +34,7 @@ Substance Painter 10.0.1 上调用验证**，修复了 7 个此前被 mock 测�
   或全部可改项为 None 时，明确报错而非静默谎报 ok。
 - `sp_set_environment` 只在 `Usage.ENVIRONMENT` 资源里匹配，避免误选同名非环境资源。
 - mcp.json 补全到 94 工具，version 0.5.0 → 0.6.0。
+- pyproject 版本号同步到 0.6.0。
 - README 加 computer-use 安全警告（mouse_*/key_send/sp_shortcut 会真实操控
   物理鼠标键盘，调用时勿同时用电脑、先 window_focus）。
 

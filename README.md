@@ -95,7 +95,7 @@ New-Item -ItemType SymbolicLink -Path "$plugins\sp_bridge" -Target "<SP-MCP>\plu
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
-pip install fastmcp requests
+pip install -e ".[dev]"
 ```
 
 ### 4. 配置 LLM 客户端
@@ -380,6 +380,14 @@ mcp_servers:
 *   **窗口前台**：Computer Use 鼠标/键盘输入受 Windows 前台窗口限制，操作前务必调用 `sp_window_focus()`。
 
 ## 🔧 调试与排错
+
+### 本地测试
+
+优先使用项目虚拟环境里的 Python 运行测试，避免误用 WindowsApps 的 `python.exe` stub 或全局 pytest：
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/ -m "not integration" -v
+```
 
 | 问题 | 常见排查方案 |
 |------|------|
